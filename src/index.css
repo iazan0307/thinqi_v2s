@@ -1,0 +1,97 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 240 10% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 10%;
+
+    --primary: 263 70% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 263 60% 95%;
+    --secondary-foreground: 263 70% 40%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 263 60% 95%;
+    --accent-foreground: 263 70% 40%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 263 70% 58%;
+
+    --radius: 0.75rem;
+
+    /* Semantic tokens */
+    --kpi-green: 142 71% 45%;
+    --kpi-green-bg: 142 76% 95%;
+    --kpi-red: 0 72% 51%;
+    --kpi-red-bg: 0 86% 97%;
+    --kpi-orange: 25 95% 53%;
+    --kpi-orange-bg: 33 100% 96%;
+    --kpi-blue: 221 83% 53%;
+    --kpi-blue-bg: 214 95% 95%;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 240 5% 26%;
+    --sidebar-primary: 263 70% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 263 60% 95%;
+    --sidebar-accent-foreground: 263 70% 40%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 263 70% 58%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer utilities {
+  .kpi-green { color: hsl(var(--kpi-green)); }
+  .kpi-green-bg { background-color: hsl(var(--kpi-green-bg)); }
+  .kpi-red { color: hsl(var(--kpi-red)); }
+  .kpi-red-bg { background-color: hsl(var(--kpi-red-bg)); }
+  .kpi-orange { color: hsl(var(--kpi-orange)); }
+  .kpi-orange-bg { background-color: hsl(var(--kpi-orange-bg)); }
+  .kpi-blue { color: hsl(var(--kpi-blue)); }
+  .kpi-blue-bg { background-color: hsl(var(--kpi-blue-bg)); }
+}
+
+/* Scroll reveal animation */
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.animate-reveal {
+  animation: reveal-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}

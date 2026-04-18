@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(ls /Users/joaorafael/Downloads/thinqi-insights-main/server/.env*)",
+      "Bash(curl -s \"https://api.supabase.com/v1/projects/ekyvxuespodbiaseyihe\" -H \"Authorization: Bearer sbp_8ebec3e52e58253e71cb228ac3df0a2c02fa77f9\")",
+      "Bash(curl:*)",
+      "Bash(PROJECT=\"ekyvxuespodbiaseyihe\")",
+      "Bash(TOKEN=\"sbp_8ebec3e52e58253e71cb228ac3df0a2c02fa77f9\")",
+      "Bash(__NEW_LINE_4888126641b6bf4d__ curl:*)",
+      "Bash(python3 -m json.tool)",
+      "Bash(grep -n \"arquivoupload\\\\|arquivos\\\\|uploads\\\\|listArquivos\\\\|getArquivos\" /Users/joaorafael/Downloads/thinqi-insights-main/server/src/routes/*.ts /Users/joaorafael/Downloads/thinqi-insights-main/server/src/controllers/*.ts)",
+      "Bash(find /Users/joaorafael/Downloads/thinqi-insights-main -name *.ofx -o -name *ofx* -type d)",
+      "Skill(update-config)",
+      "Read(//c/Users/augus/.claude/**)",
+      "Bash(node *)",
+      "Bash(git init *)",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)"
+    ]
+  }
+}

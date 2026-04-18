@@ -1,0 +1,1 @@
+ALTER TABLE "empresas" ADD COLUMN "saldo_inicial" DECIMAL(14,2) NOT NULL DEFAULT 0;

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx tsc:*)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:n8mjSPGZWKCBnhiQ@db.ekyvxuespodbiaseyihe.supabase.co:6543/postgres?pgbouncer=true&sslmode=require\" npx prisma db push)",
+      "Bash(nc -zv db.ekyvxuespodbiaseyihe.supabase.co 5432)",
+      "Bash(nc -zv db.ekyvxuespodbiaseyihe.supabase.co 6543)",
+      "Bash(curl -s --max-time 10 \"https://ekyvxuespodbiaseyihe.supabase.co/rest/v1/\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVreXZ4dWVzcG9kYmlhc2V5aWhlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ3OTY0OTUsImV4cCI6MjA5MDM3MjQ5NX0.txdZ_IFPRt37KJzRGrk6cCmlLBsxAPqOrllKqDwWyX0\")"
+    ]
+  }
+}

@@ -99,7 +99,7 @@ export async function criarUsuario(
     })
 
     const roleLabel = role === Role.ADMIN ? 'Administrador' : 'Contador'
-    const loginUrl = `${getPublicUrl()}/login`
+    const loginUrl = getPublicUrl()
 
     // Falha de SMTP NÃO deve quebrar a criação — o usuário já existe no banco.
     // Devolvemos a senha temporária ao admin para repasse manual.
@@ -281,7 +281,7 @@ export async function resetarSenha(
 
     await prisma.usuario.update({ where: { id }, data: { senha_hash: hash } })
 
-    const loginUrl = `${getPublicUrl()}/login`
+    const loginUrl = getPublicUrl()
     let emailEnviado = false
     let erroEnvio: string | null = null
     try {

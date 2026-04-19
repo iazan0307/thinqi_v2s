@@ -1,4 +1,4 @@
-import { LayoutDashboard, Building2, Upload, FileBarChart, GitCompare, Users, UserCog, TrendingDown, Tags } from "lucide-react";
+import { LayoutDashboard, Building2, Upload, FileBarChart, GitCompare, Users, UserCog, TrendingDown } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { ThinqiLogo } from "@/components/ThinqiLogo";
@@ -21,7 +21,6 @@ const items = [
   { title: "Conciliação Fiscal", url: "/admin/conciliacao", icon: GitCompare },
   { title: "Relatórios Gerenciais", url: "/admin/relatorios", icon: FileBarChart },
   { title: "Distribuição de Lucros", url: "/admin/retiradas", icon: TrendingDown },
-  { title: "Palavras-chave", url: "/admin/palavras-chave", icon: Tags },
   { title: "Clientes", url: "/admin/clientes", icon: Users },
   { title: "Usuários Internos", url: "/admin/usuarios", icon: UserCog },
 ];

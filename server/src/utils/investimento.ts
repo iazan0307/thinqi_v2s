@@ -9,13 +9,7 @@
  *
  * Esses padrões cobrem os principais bancos (Itaú, Bradesco, Santander, BB,
  * Caixa, Inter) — mantenha sincronizado com o portalController.
- *
- * Além dos padrões fixos, palavras-chave cadastradas pelo admin via
- * `palavras_chave_investimento` são carregadas em cache e checadas como
- * substring case-insensitive.
  */
-
-import { prisma } from './prisma'
 
 const INVESTIMENTO_PATTERNS: RegExp[] = [
   /aplic\s*aut/i,           // Itaú: "APLIC AUT MAIS"
@@ -30,26 +24,7 @@ const INVESTIMENTO_PATTERNS: RegExp[] = [
   /rdb\s*autom/i,           // Variante: "RDB AUTOMATICO"
 ]
 
-let palavrasCustomCache: string[] = []
-let cacheCarregado = false
-
-export async function carregarPalavrasChaveCache(): Promise<void> {
-  const itens = await prisma.palavraChaveInvestimento.findMany({
-    where: { ativo: true },
-    select: { palavra: true },
-  })
-  palavrasCustomCache = itens.map(i => i.palavra.toLowerCase())
-  cacheCarregado = true
-}
-
-export function invalidarPalavrasChaveCache(): void {
-  cacheCarregado = false
-}
-
 export function isInvestimentoAutomatico(descricao: string | null | undefined): boolean {
   if (!descricao) return false
-  if (INVESTIMENTO_PATTERNS.some(p => p.test(descricao))) return true
-  if (!cacheCarregado) return false
-  const desc = descricao.toLowerCase()
-  return palavrasCustomCache.some(p => desc.includes(p))
+  return INVESTIMENTO_PATTERNS.some(p => p.test(descricao))
 }

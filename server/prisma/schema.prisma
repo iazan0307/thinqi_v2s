@@ -254,21 +254,6 @@ model RelatorioDesconforto {
   @@map("relatorios_desconforto")
 }
 
-// Palavras-chave cadastráveis usadas pelo motor de conciliação para identificar
-// movimentações que devem ser ignoradas (aplicações automáticas, resgates de
-// investimento, etc.). Substring case-insensitive na descrição da transação.
-model PalavraChaveInvestimento {
-  id          String   @id @default(cuid())
-  palavra     String   @unique
-  descricao   String?  // Comentário opcional para o admin saber a origem
-  ativo       Boolean  @default(true)
-  created_by  String?  // usuario_id que cadastrou
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
-
-  @@map("palavras_chave_investimento")
-}
-
 model Usuario {
   id          String   @id @default(cuid())
   empresa_id  String?  // null = usuário ThinQi (ADMIN/CONTADOR); preenchido = cliente

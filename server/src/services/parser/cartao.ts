@@ -212,7 +212,7 @@ function cellToString(val: ExcelJS.CellValue): string {
 
 export async function parseCartaoXLSX(buffer: Buffer): Promise<TransacaoCartaoParseada[]> {
   const workbook = new ExcelJS.Workbook()
-  await workbook.xlsx.load(buffer as Parameters<typeof workbook.xlsx.load>[0])
+  await workbook.xlsx.load(buffer as unknown as Parameters<typeof workbook.xlsx.load>[0])
 
   const sheet = workbook.worksheets[0]
   if (!sheet || sheet.rowCount < 2) {

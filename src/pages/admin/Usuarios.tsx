@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { UserPlus, Loader2, Users, CheckCircle2, XCircle, ShieldCheck, Calculator, KeyRound, Pencil, Copy, AlertTriangle } from "lucide-react";
+import { UserPlus, Loader2, Users, CheckCircle2, XCircle, ShieldCheck, Calculator, KeyRound, Pencil, Copy, AlertTriangle, Trash2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Pagination } from "@/components/Pagination";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -76,6 +76,9 @@ const Usuarios = () => {
   // Confirmação de reset de senha
   const [resetTarget, setResetTarget] = useState<Usuario | null>(null);
 
+  // Confirmação de exclusão
+  const [deleteTarget, setDeleteTarget] = useState<Usuario | null>(null);
+
   // Fallback quando o e-mail não pôde ser enviado (mostra senha temp para repasse manual)
   const [credenciaisManuais, setCredenciaisManuais] = useState<{
     titulo: string;
@@ -142,6 +145,16 @@ const Usuarios = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["usuarios-internos"] });
       toast.success("Status atualizado.");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const excluir = useMutation({
+    mutationFn: (id: string) => api.delete(`/admin/usuarios/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["usuarios-internos"] });
+      setDeleteTarget(null);
+      toast.success("Usuário excluído.");
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -272,14 +285,23 @@ const Usuarios = () => {
                               <KeyRound size={11} /> Senha
                             </Button>
                             {u.id !== me?.id && (
-                              <Button
-                                variant="outline" size="sm"
-                                className="text-xs h-7 px-2"
-                                onClick={() => toggleAtivo.mutate({ id: u.id, ativo: !u.ativo })}
-                                disabled={toggleAtivo.isPending}
-                              >
-                                {u.ativo ? "Desativar" : "Ativar"}
-                              </Button>
+                              <>
+                                <Button
+                                  variant="outline" size="sm"
+                                  className="text-xs h-7 px-2"
+                                  onClick={() => toggleAtivo.mutate({ id: u.id, ativo: !u.ativo })}
+                                  disabled={toggleAtivo.isPending}
+                                >
+                                  {u.ativo ? "Desativar" : "Ativar"}
+                                </Button>
+                                <Button
+                                  variant="outline" size="sm"
+                                  className="text-xs h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+                                  onClick={() => setDeleteTarget(u)}
+                                >
+                                  <Trash2 size={11} />
+                                </Button>
+                              </>
                             )}
                           </div>
                         </TableCell>
@@ -408,6 +430,32 @@ const Usuarios = () => {
             >
               {resetSenha.isPending && <Loader2 size={14} className="animate-spin mr-1" />}
               Redefinir e enviar e-mail
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── Confirmação exclusão ── */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={v => !v && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir usuário?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta ação é permanente e removerá o acesso de{" "}
+              <strong>{deleteTarget?.nome}</strong> ({deleteTarget?.email}).
+              Se o usuário tiver uploads no histórico, a exclusão será bloqueada —
+              nesse caso, desative em vez de excluir.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+              onClick={() => deleteTarget && excluir.mutate(deleteTarget.id)}
+              disabled={excluir.isPending}
+            >
+              {excluir.isPending && <Loader2 size={14} className="animate-spin mr-1" />}
+              Excluir definitivamente
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

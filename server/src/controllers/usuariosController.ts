@@ -210,6 +210,42 @@ export async function toggleUsuario(
   }
 }
 
+// ─── DELETE /api/admin/usuarios/:id ──────────────────────────────────────────
+
+export async function excluirUsuario(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = req.params
+
+    if (req.user!.id === id) {
+      throw new AppError(400, 'Você não pode excluir sua própria conta')
+    }
+
+    const usuario = await prisma.usuario.findUnique({ where: { id } })
+    if (!usuario || usuario.role === Role.CLIENTE) {
+      throw new AppError(404, 'Usuário não encontrado')
+    }
+
+    // ArquivoUpload.uploaded_by tem FK obrigatória — se o usuário já subiu
+    // qualquer arquivo, exclusão hard bloqueia. Nesse caso, orientamos a desativar.
+    const uploads = await prisma.arquivoUpload.count({ where: { uploaded_by: id } })
+    if (uploads > 0) {
+      throw new AppError(
+        409,
+        `Usuário possui ${uploads} upload(s) no histórico. Desative em vez de excluir.`,
+      )
+    }
+
+    await prisma.usuario.delete({ where: { id } })
+    res.json({ excluido: true })
+  } catch (err) {
+    next(err)
+  }
+}
+
 // ─── POST /api/admin/usuarios/:id/resetar-senha ──────────────────────────────
 
 export async function resetarSenha(

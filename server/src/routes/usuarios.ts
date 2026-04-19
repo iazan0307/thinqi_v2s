@@ -9,6 +9,7 @@ import {
   atualizarUsuario,
   toggleUsuario,
   resetarSenha,
+  excluirUsuario,
 } from '../controllers/usuariosController'
 
 const router = Router()
@@ -32,5 +33,6 @@ router.post('/',  validate(criarSchema), criarUsuario)
 router.put('/:id',  validate(atualizarSchema), atualizarUsuario)
 router.put('/:id/ativo', validate(toggleSchema), toggleUsuario)
 router.post('/:id/resetar-senha',        resetarSenha)
+router.delete('/:id',                    excluirUsuario)
 
 export { router as usuariosRoutes }

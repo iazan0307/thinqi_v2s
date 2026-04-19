@@ -61,8 +61,11 @@ app.use('/api/cartao', cartaoRoutes)
 app.use('/api/conciliacao', conciliacaoRoutes)
 app.use('/api/relatorio-desconforto', relatorioRoutes)
 app.use('/api/portal', portalRoutes)
-app.use('/api/admin', adminClientesRoutes)
+// Mais específica primeiro — Express casa por prefixo na ordem de registro,
+// e o middleware de autenticação do mount /api/admin (adminClientesRoutes)
+// consome requests a /api/admin/usuarios/* antes deles caírem pro router certo.
 app.use('/api/admin/usuarios', usuariosRoutes)
+app.use('/api/admin', adminClientesRoutes)
 app.use('/api/estimativa-imposto', estimativaImpostoRoutes)
 app.use('/api/palavras-chave-investimento', palavrasChaveRoutes)
 

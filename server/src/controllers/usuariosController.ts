@@ -11,6 +11,16 @@ import { AppError } from '../middleware/errorHandler'
 import { Role } from '@prisma/client'
 import { enviarEmail } from '../services/email/mailer'
 
+// FRONTEND_URL pode conter múltiplas origens separadas por vírgula (ex: "http://localhost:8080,https://app.com").
+// Para links em e-mail, preferimos a primeira URL HTTPS; caso não exista, a primeira da lista.
+function getPublicUrl(): string {
+  const urls = (process.env.FRONTEND_URL ?? 'http://localhost:8080')
+    .split(',')
+    .map(u => u.trim().replace(/\/$/, ''))
+    .filter(Boolean)
+  return urls.find(u => u.startsWith('https://')) ?? urls[0] ?? 'http://localhost:8080'
+}
+
 // ─── GET /api/admin/usuarios ──────────────────────────────────────────────────
 
 export async function listUsuarios(
@@ -89,6 +99,7 @@ export async function criarUsuario(
     })
 
     const roleLabel = role === Role.ADMIN ? 'Administrador' : 'Contador'
+    const loginUrl = `${getPublicUrl()}/login`
 
     // Falha de SMTP NÃO deve quebrar a criação — o usuário já existe no banco.
     // Devolvemos a senha temporária ao admin para repasse manual.
@@ -110,6 +121,10 @@ export async function criarUsuario(
                 <p style="margin: 0 0 8px;"><strong>E-mail:</strong> ${usuario.email}</p>
                 <p style="margin: 0;"><strong>Senha temporária:</strong> <code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">${senhaTemp}</code></p>
               </div>
+              <div style="text-align: center; margin: 24px 0;">
+                <a href="${loginUrl}" style="display: inline-block; background: #1e293b; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Acessar o sistema</a>
+              </div>
+              <p style="color: #6b7280; font-size: 12px; text-align: center;">Ou copie e cole este link no navegador:<br><a href="${loginUrl}" style="color: #1e293b;">${loginUrl}</a></p>
               <p style="color: #6b7280; font-size: 12px;">Por segurança, altere sua senha no primeiro acesso em <em>Configurações → Alterar Senha</em>.</p>
             </div>
           </div>
@@ -266,6 +281,7 @@ export async function resetarSenha(
 
     await prisma.usuario.update({ where: { id }, data: { senha_hash: hash } })
 
+    const loginUrl = `${getPublicUrl()}/login`
     let emailEnviado = false
     let erroEnvio: string | null = null
     try {
@@ -283,6 +299,10 @@ export async function resetarSenha(
               <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
                 <p style="margin: 0;"><strong>Nova senha temporária:</strong> <code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">${novaSenha}</code></p>
               </div>
+              <div style="text-align: center; margin: 24px 0;">
+                <a href="${loginUrl}" style="display: inline-block; background: #1e293b; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Acessar o sistema</a>
+              </div>
+              <p style="color: #6b7280; font-size: 12px; text-align: center;">Ou copie e cole este link no navegador:<br><a href="${loginUrl}" style="color: #1e293b;">${loginUrl}</a></p>
               <p style="color: #6b7280; font-size: 12px;">Altere sua senha imediatamente em <em>Configurações → Alterar Senha</em>.</p>
             </div>
           </div>

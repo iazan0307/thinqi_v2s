@@ -1,6 +1,4 @@
 import { Request, Response, NextFunction } from 'express'
-import * as fs from 'fs/promises'
-import * as path from 'path'
 import { prisma } from '../utils/prisma'
 import { AppError } from '../middleware/errorHandler'
 import { calcularConciliacao } from '../services/engine/conciliacao'
@@ -26,7 +24,6 @@ export async function enviarRelatorioEmail(
 
     if (!relatorio) throw new AppError(404, 'Relatório não encontrado')
 
-    // Busca todos os clientes ativos vinculados à empresa
     const clientes = await prisma.usuario.findMany({
       where: { empresa_id: relatorio.empresa_id, role: Role.CLIENTE, ativo: true },
       select: { email: true },
@@ -38,29 +35,14 @@ export async function enviarRelatorioEmail(
 
     const destinatarios = clientes.map(c => c.email)
 
-    // Tenta ler PDF do disco; se não existir, regera
-    let pdfBuffer: Buffer
-
-    if (relatorio.pdf_path) {
-      const fullPath = path.join(process.cwd(), 'uploads', relatorio.pdf_path)
-      try {
-        pdfBuffer = await fs.readFile(fullPath)
-      } catch {
-        const resultado = await calcularConciliacao(relatorio.empresa_id, relatorio.mes_ref)
-        pdfBuffer = await gerarPDFRelatorio(resultado, {
-          razao_social: relatorio.empresa.razao_social,
-          cnpj: relatorio.empresa.cnpj,
-          regime_tributario: relatorio.empresa.regime_tributario,
-        })
-      }
-    } else {
-      const resultado = await calcularConciliacao(relatorio.empresa_id, relatorio.mes_ref)
-      pdfBuffer = await gerarPDFRelatorio(resultado, {
-        razao_social: relatorio.empresa.razao_social,
-        cnpj: relatorio.empresa.cnpj,
-        regime_tributario: relatorio.empresa.regime_tributario,
-      })
-    }
+    // Sempre regenera o PDF a partir do resultado salvo — garante design mais recente
+    // e evita dependência de cache em disco (que não sobrevive a redeploys).
+    const resultado = await calcularConciliacao(relatorio.empresa_id, relatorio.mes_ref)
+    const pdfBuffer = await gerarPDFRelatorio(resultado, {
+      razao_social: relatorio.empresa.razao_social,
+      cnpj: relatorio.empresa.cnpj,
+      regime_tributario: relatorio.empresa.regime_tributario,
+    })
 
     const mes = new Date(relatorio.mes_ref).toLocaleDateString('pt-BR', {
       month: 'long',

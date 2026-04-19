@@ -13,6 +13,8 @@ const updateSocioSchema = z.object({
   nome: z.string().min(3).max(200).optional(),
   percentual_societario: z.number().min(0.01).max(100).optional(),
   limite_isencao: z.number().min(0).optional(),
+  tem_prolabore: z.boolean().optional(),
+  valor_prolabore_mensal: z.number().min(0).optional(),
   ativo: z.boolean().optional(),
 })
 

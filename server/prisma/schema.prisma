@@ -110,6 +110,7 @@ model Socio {
   percentual_societario Decimal  @db.Decimal(5, 2)
   limite_isencao        Decimal  @db.Decimal(12, 2) @default(7640.80) // Limite mensal isento de IR 2024
   tem_prolabore         Boolean  @default(false) // Indica se o sócio recebe pró-labore (folha) além de distribuição de lucros
+  valor_prolabore_mensal Decimal @db.Decimal(12, 2) @default(0) // Valor mensal do pró-labore; descontado do total de retiradas antes de avaliar tributação
   ativo                 Boolean  @default(true)
   created_at            DateTime @default(now())
   updated_at            DateTime @updatedAt
@@ -251,6 +252,21 @@ model RelatorioDesconforto {
 
   @@unique([empresa_id, mes_ref])
   @@map("relatorios_desconforto")
+}
+
+// Palavras-chave cadastráveis usadas pelo motor de conciliação para identificar
+// movimentações que devem ser ignoradas (aplicações automáticas, resgates de
+// investimento, etc.). Substring case-insensitive na descrição da transação.
+model PalavraChaveInvestimento {
+  id          String   @id @default(cuid())
+  palavra     String   @unique
+  descricao   String?  // Comentário opcional para o admin saber a origem
+  ativo       Boolean  @default(true)
+  created_by  String?  // usuario_id que cadastrou
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@map("palavras_chave_investimento")
 }
 
 model Usuario {

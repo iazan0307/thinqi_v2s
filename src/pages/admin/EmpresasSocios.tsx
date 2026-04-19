@@ -31,6 +31,7 @@ interface Socio {
   cpf_mascara: string;
   percentual_societario: number;
   tem_prolabore?: boolean;
+  valor_prolabore_mensal?: number | string;
   ativo: boolean;
 }
 
@@ -191,6 +192,31 @@ const EmpresasSocios = () => {
   const [inviteNome, setInviteNome] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
 
+  // Fallback quando o e-mail do convite falha
+  const [credenciaisManuais, setCredenciaisManuais] = useState<{
+    email: string;
+    senha: string;
+    loginUrl: string;
+    erro: string | null;
+  } | null>(null);
+
+  interface ConviteResposta {
+    usuario: { id: string; nome: string; email: string };
+    convite_enviado: boolean;
+    erro_envio: string | null;
+    senha_temporaria: string;
+    login_url: string;
+  }
+
+  const copiarTexto = async (t: string) => {
+    try {
+      await navigator.clipboard.writeText(t);
+      toast.success("Copiado!");
+    } catch {
+      toast.error("Não foi possível copiar");
+    }
+  };
+
   // Modal novo sócio
   const [showSocioModal, setShowSocioModal] = useState(false);
   const [socioEmpresaId, setSocioEmpresaId] = useState<string | null>(null);
@@ -198,12 +224,14 @@ const EmpresasSocios = () => {
   const [sCpf, setSCpf]       = useState("");
   const [sPerc, setSPerc]     = useState("");
   const [sProlabore, setSProlabore] = useState(false);
+  const [sProlaboreValor, setSProlaboreValor] = useState("");
 
   // Modal editar sócio
   const [editSocio, setEditSocio]     = useState<Socio | null>(null);
   const [editNome, setEditNome]       = useState("");
   const [editPerc, setEditPerc]       = useState("");
   const [editProlabore, setEditProlabore] = useState(false);
+  const [editProlaboreValor, setEditProlaboreValor] = useState("");
 
   // Confirmação apagar sócio
   const [deleteSocioTarget, setDeleteSocioTarget] = useState<(Socio & { empresaId: string }) | null>(null);
@@ -251,12 +279,22 @@ const EmpresasSocios = () => {
 
   const convidarClienteInline = useMutation({
     mutationFn: () =>
-      api.post("/admin/clientes/convidar", { nome: inviteNome, email: inviteEmail, empresa_id: novaEmpresa!.id }),
-    onSuccess: () => {
+      api.post<ConviteResposta>("/admin/clientes/convidar", { nome: inviteNome, email: inviteEmail, empresa_id: novaEmpresa!.id }),
+    onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["empresas"] });
       qc.invalidateQueries({ queryKey: ["clientes"] });
-      toast.success("Convite enviado! O cliente receberá as credenciais por e-mail.");
+      const emailUsado = r.usuario.email;
       fecharModalEmpresa();
+      if (r.convite_enviado) {
+        toast.success("Convite enviado! O cliente receberá as credenciais por e-mail.");
+      } else {
+        setCredenciaisManuais({
+          email: emailUsado,
+          senha: r.senha_temporaria,
+          loginUrl: r.login_url,
+          erro: r.erro_envio,
+        });
+      }
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -275,12 +313,15 @@ const EmpresasSocios = () => {
         cpf: sCpf.replace(/\D/g, ""),
         percentual_societario: parseFloat(sPerc),
         tem_prolabore: sProlabore,
+        valor_prolabore_mensal: sProlabore
+          ? Number(sProlaboreValor.replace(/\./g, "").replace(",", ".")) || 0
+          : 0,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["empresa", socioEmpresaId] });
       qc.invalidateQueries({ queryKey: ["empresas"] });
       setShowSocioModal(false);
-      setSNome(""); setSCpf(""); setSPerc(""); setSProlabore(false);
+      setSNome(""); setSCpf(""); setSPerc(""); setSProlabore(false); setSProlaboreValor("");
       toast.success("Sócio cadastrado!");
     },
     onError: (err: Error) => toast.error(err.message),
@@ -292,6 +333,9 @@ const EmpresasSocios = () => {
         nome: editNome,
         percentual_societario: parseFloat(editPerc),
         tem_prolabore: editProlabore,
+        valor_prolabore_mensal: editProlabore
+          ? Number(editProlaboreValor.replace(/\./g, "").replace(",", ".")) || 0
+          : 0,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["empresa", expandedId] });
@@ -333,6 +377,11 @@ const EmpresasSocios = () => {
     setEditNome(s.nome);
     setEditPerc(String(Number(s.percentual_societario)));
     setEditProlabore(!!s.tem_prolabore);
+    setEditProlaboreValor(
+      s.valor_prolabore_mensal !== undefined && s.valor_prolabore_mensal !== null
+        ? String(Number(s.valor_prolabore_mensal)).replace(".", ",")
+        : "",
+    );
   };
 
   const empresas = data?.data ?? [];
@@ -477,6 +526,21 @@ const EmpresasSocios = () => {
                 </p>
               </div>
             </div>
+            {sProlabore && (
+              <div className="space-y-2">
+                <Label>Valor Pró-labore Mensal (R$)</Label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={sProlaboreValor}
+                  onChange={e => setSProlaboreValor(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Esse valor é descontado do total de retiradas do mês antes de avaliar tributação e calcular o IR.
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSocioModal(false)}>Cancelar</Button>
@@ -513,6 +577,21 @@ const EmpresasSocios = () => {
                 </p>
               </div>
             </div>
+            {editProlabore && (
+              <div className="space-y-2">
+                <Label>Valor Pró-labore Mensal (R$)</Label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={editProlaboreValor}
+                  onChange={e => setEditProlaboreValor(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Esse valor é descontado do total de retiradas do mês antes de avaliar tributação e calcular o IR.
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditSocio(null)}>Cancelar</Button>
@@ -704,6 +783,45 @@ const EmpresasSocios = () => {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Fallback de credenciais quando o e-mail do convite falha */}
+      <Dialog open={!!credenciaisManuais} onOpenChange={v => !v && setCredenciaisManuais(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cliente criado, mas o e-mail falhou</DialogTitle>
+            <DialogDescription>
+              O servidor SMTP não respondeu. Envie estas credenciais manualmente ao cliente.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">E-mail</Label>
+              <div className="flex gap-2">
+                <Input readOnly value={credenciaisManuais?.email ?? ""} />
+                <Button variant="outline" size="icon" onClick={() => copiarTexto(credenciaisManuais?.email ?? "")}>
+                  <Mail size={14} />
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Senha temporária</Label>
+              <Input readOnly className="font-mono" value={credenciaisManuais?.senha ?? ""} onClick={() => copiarTexto(credenciaisManuais?.senha ?? "")} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Link de acesso</Label>
+              <Input readOnly value={credenciaisManuais?.loginUrl ?? ""} onClick={() => copiarTexto(credenciaisManuais?.loginUrl ?? "")} />
+            </div>
+            {credenciaisManuais?.erro && (
+              <p className="text-xs text-muted-foreground break-all">
+                Detalhe do erro SMTP: {credenciaisManuais.erro}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setCredenciaisManuais(null)}>Entendi</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

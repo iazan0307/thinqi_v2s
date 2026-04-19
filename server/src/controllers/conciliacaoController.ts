@@ -4,8 +4,6 @@ import { prisma } from '../utils/prisma'
 import { AppError } from '../middleware/errorHandler'
 import { calcularConciliacao, salvarRelatorio } from '../services/engine/conciliacao'
 import { gerarPDFRelatorio } from '../services/report/pdf'
-import * as fs from 'fs/promises'
-import * as path from 'path'
 
 /** GET /api/conciliacao/:empresaId/:mes — Calcula (sem salvar) */
 export async function getConciliacao(
@@ -55,22 +53,15 @@ export async function gerarRelatorio(
     const mesRef = new Date(Date.UTC(year, month - 1, 1))
     const resultado = await calcularConciliacao(empresa_id, mesRef)
 
-    // Gera PDF
-    const pdfBuffer = await gerarPDFRelatorio(resultado, {
+    // Valida geração do PDF sem persistir: o download e o envio por e-mail sempre
+    // regeneram a partir do resultado salvo, então não precisamos de cache em disco.
+    await gerarPDFRelatorio(resultado, {
       razao_social: empresa.razao_social,
       cnpj: empresa.cnpj,
       regime_tributario: empresa.regime_tributario,
     })
 
-    // Salva PDF em disco
-    const uploadsDir = path.join(process.cwd(), 'uploads', 'relatorios')
-    await fs.mkdir(uploadsDir, { recursive: true })
-    const filename = `relatorio_${empresa_id}_${mesStr}.pdf`
-    const pdfPath = path.join(uploadsDir, filename)
-    await fs.writeFile(pdfPath, pdfBuffer)
-
-    // Salva resultado no banco
-    const relatorioId = await salvarRelatorio(resultado, `relatorios/${filename}`)
+    const relatorioId = await salvarRelatorio(resultado)
 
     res.status(201).json({ id: relatorioId, pdf_gerado: true })
   } catch (err) {
@@ -85,14 +76,18 @@ export async function listRelatorios(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { empresa_id, status, page: pageQ, limit: limitQ } = req.query as Record<string, string>
+    const { empresa_id, status, mes_ref, page: pageQ, limit: limitQ } = req.query as Record<string, string>
 
     const page = Math.max(1, Number(pageQ) || 1)
-    const limit = Math.min(100, Math.max(1, Number(limitQ) || 20))
+    const limit = Math.min(500, Math.max(1, Number(limitQ) || 20))
 
     const where: Record<string, unknown> = {}
     if (empresa_id) where['empresa_id'] = empresa_id
     if (status) where['status'] = status
+    if (mes_ref) {
+      const [y, m] = mes_ref.split('-').map(Number)
+      if (y && m) where['mes_ref'] = new Date(Date.UTC(y, m - 1, 1))
+    }
 
     const [total, relatorios] = await Promise.all([
       prisma.relatorioDesconforto.count({ where }),

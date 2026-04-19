@@ -21,12 +21,6 @@ interface DashboardData {
   caixa_livre: number;
   periodo_liberado: boolean;
   conciliacao: { status: string; percentual_inconsistencia: number } | null;
-  ultimas_transacoes: {
-    data: string;
-    descricao: string;
-    valor: number;
-    tipo: "ENTRADA" | "SAIDA";
-  }[];
 }
 
 interface HistoricoData {
@@ -271,44 +265,6 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Últimas transações */}
-      {data && data.ultimas_transacoes.length > 0 && (
-        <div className="bg-card rounded-xl border border-border shadow-sm animate-reveal">
-          <div className="p-6 pb-4">
-            <h2 className="text-base font-semibold">Últimas Transações</h2>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-t border-border text-muted-foreground">
-                  <th className="text-left font-medium px-6 py-3">Data</th>
-                  <th className="text-left font-medium px-6 py-3">Descrição</th>
-                  <th className="text-right font-medium px-6 py-3">Valor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.ultimas_transacoes.map((t, i) => (
-                  <tr key={i} className="border-t border-border hover:bg-muted/40 transition-colors">
-                    <td className="px-6 py-3 tabular-nums text-muted-foreground">
-                      {new Date(t.data).toLocaleDateString("pt-BR", { timeZone: "UTC" })}
-                    </td>
-                    <td className="px-6 py-3 max-w-xs truncate">{t.descricao}</td>
-                    <td className={`px-6 py-3 text-right font-medium tabular-nums ${t.tipo === "ENTRADA" ? "kpi-green" : "kpi-red"}`}>
-                      {t.tipo === "ENTRADA" ? "+" : "-"}{fmtBRL(Math.abs(t.valor))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {data && data.ultimas_transacoes.length === 0 && !isLoading && (
-        <div className="text-center py-12 text-muted-foreground text-sm bg-card rounded-xl border border-border">
-          Nenhuma transação encontrada para este mês. Solicite ao seu contador o upload dos extratos.
-        </div>
-      )}
     </div>
   );
 };

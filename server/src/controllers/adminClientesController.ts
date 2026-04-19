@@ -169,15 +169,26 @@ export async function convidarCliente(
       </div>
     `
 
-    await enviarEmail({
-      to: email,
-      subject: `Seu acesso ThinQi — ${empresa.razao_social}`,
-      html: htmlConvite,
-    })
+    let conviteEnviado = false
+    let erroEnvio: string | null = null
+    try {
+      await enviarEmail({
+        to: email,
+        subject: `Seu acesso ThinQi — ${empresa.razao_social}`,
+        html: htmlConvite,
+      })
+      conviteEnviado = true
+    } catch (e) {
+      erroEnvio = e instanceof Error ? e.message : 'Falha desconhecida'
+      console.warn(`[CLIENTES] Falha ao enviar convite para ${email}: ${erroEnvio}`)
+    }
 
     res.status(201).json({
       usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email },
-      convite_enviado: true,
+      convite_enviado: conviteEnviado,
+      erro_envio: erroEnvio,
+      senha_temporaria: senhaTemp,
+      login_url: loginUrl,
     })
   } catch (err) {
     next(err)

@@ -90,28 +90,43 @@ export async function criarUsuario(
 
     const roleLabel = role === Role.ADMIN ? 'Administrador' : 'Contador'
 
-    await enviarEmail({
-      to:      email,
-      subject: 'Seu acesso ThinQi foi criado',
-      html: `
-        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: #1e293b; color: white; padding: 24px; border-radius: 8px 8px 0 0;">
-            <h2 style="margin: 0;">ThinQi — Bem-vindo(a)!</h2>
-          </div>
-          <div style="background: #f8fafc; padding: 24px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px;">
-            <p>Olá, <strong>${usuario.nome}</strong>!</p>
-            <p>Seu acesso ao painel ThinQi foi criado com o perfil de <strong>${roleLabel}</strong>.</p>
-            <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
-              <p style="margin: 0 0 8px;"><strong>E-mail:</strong> ${usuario.email}</p>
-              <p style="margin: 0;"><strong>Senha temporária:</strong> <code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">${senhaTemp}</code></p>
+    // Falha de SMTP NÃO deve quebrar a criação — o usuário já existe no banco.
+    // Devolvemos a senha temporária ao admin para repasse manual.
+    let conviteEnviado = false
+    let erroEnvio: string | null = null
+    try {
+      await enviarEmail({
+        to:      email,
+        subject: 'Seu acesso ThinQi foi criado',
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+            <div style="background: #1e293b; color: white; padding: 24px; border-radius: 8px 8px 0 0;">
+              <h2 style="margin: 0;">ThinQi — Bem-vindo(a)!</h2>
             </div>
-            <p style="color: #6b7280; font-size: 12px;">Por segurança, altere sua senha no primeiro acesso em <em>Configurações → Alterar Senha</em>.</p>
+            <div style="background: #f8fafc; padding: 24px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px;">
+              <p>Olá, <strong>${usuario.nome}</strong>!</p>
+              <p>Seu acesso ao painel ThinQi foi criado com o perfil de <strong>${roleLabel}</strong>.</p>
+              <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
+                <p style="margin: 0 0 8px;"><strong>E-mail:</strong> ${usuario.email}</p>
+                <p style="margin: 0;"><strong>Senha temporária:</strong> <code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">${senhaTemp}</code></p>
+              </div>
+              <p style="color: #6b7280; font-size: 12px;">Por segurança, altere sua senha no primeiro acesso em <em>Configurações → Alterar Senha</em>.</p>
+            </div>
           </div>
-        </div>
-      `,
-    })
+        `,
+      })
+      conviteEnviado = true
+    } catch (e) {
+      erroEnvio = e instanceof Error ? e.message : 'Falha desconhecida'
+      console.warn(`[USUARIOS] Falha ao enviar convite para ${email}: ${erroEnvio}`)
+    }
 
-    res.status(201).json({ usuario, convite_enviado: true })
+    res.status(201).json({
+      usuario,
+      convite_enviado: conviteEnviado,
+      erro_envio: erroEnvio,
+      senha_temporaria: senhaTemp,
+    })
   } catch (err) {
     next(err)
   }
@@ -215,27 +230,40 @@ export async function resetarSenha(
 
     await prisma.usuario.update({ where: { id }, data: { senha_hash: hash } })
 
-    await enviarEmail({
-      to:      usuario.email,
-      subject: 'Sua senha ThinQi foi redefinida',
-      html: `
-        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: #1e293b; color: white; padding: 24px; border-radius: 8px 8px 0 0;">
-            <h2 style="margin: 0;">ThinQi — Redefinição de Senha</h2>
-          </div>
-          <div style="background: #f8fafc; padding: 24px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px;">
-            <p>Olá, <strong>${usuario.nome}</strong>!</p>
-            <p>Sua senha foi redefinida por um administrador.</p>
-            <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
-              <p style="margin: 0;"><strong>Nova senha temporária:</strong> <code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">${novaSenha}</code></p>
+    let emailEnviado = false
+    let erroEnvio: string | null = null
+    try {
+      await enviarEmail({
+        to:      usuario.email,
+        subject: 'Sua senha ThinQi foi redefinida',
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+            <div style="background: #1e293b; color: white; padding: 24px; border-radius: 8px 8px 0 0;">
+              <h2 style="margin: 0;">ThinQi — Redefinição de Senha</h2>
             </div>
-            <p style="color: #6b7280; font-size: 12px;">Altere sua senha imediatamente em <em>Configurações → Alterar Senha</em>.</p>
+            <div style="background: #f8fafc; padding: 24px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px;">
+              <p>Olá, <strong>${usuario.nome}</strong>!</p>
+              <p>Sua senha foi redefinida por um administrador.</p>
+              <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
+                <p style="margin: 0;"><strong>Nova senha temporária:</strong> <code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">${novaSenha}</code></p>
+              </div>
+              <p style="color: #6b7280; font-size: 12px;">Altere sua senha imediatamente em <em>Configurações → Alterar Senha</em>.</p>
+            </div>
           </div>
-        </div>
-      `,
-    })
+        `,
+      })
+      emailEnviado = true
+    } catch (e) {
+      erroEnvio = e instanceof Error ? e.message : 'Falha desconhecida'
+      console.warn(`[USUARIOS] Falha ao enviar e-mail de reset para ${usuario.email}: ${erroEnvio}`)
+    }
 
-    res.json({ resetado: true })
+    res.json({
+      resetado: true,
+      email_enviado: emailEnviado,
+      erro_envio: erroEnvio,
+      senha_temporaria: novaSenha,
+    })
   } catch (err) {
     next(err)
   }

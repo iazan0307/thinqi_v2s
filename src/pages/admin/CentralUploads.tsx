@@ -234,6 +234,50 @@ const CentralUploads = () => {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  interface LoteResultado {
+    nome_original: string;
+    arquivo_id: string | null;
+    status: "criado" | "erro";
+    erro: string | null;
+  }
+  interface LoteResponse {
+    total: number;
+    sucesso: number;
+    falha: number;
+    resultados: LoteResultado[];
+  }
+
+  const uploadExtratosLote = useMutation({
+    mutationFn: async (files: File[]) => {
+      if (!empresaId) { toast.error("Selecione uma empresa primeiro"); return; }
+      const fd = new FormData();
+      for (const f of files) fd.append("arquivos", f);
+      fd.append("empresa_id", empresaId);
+      return api.upload<LoteResponse>("/upload/lote", fd);
+    },
+    onSuccess: (result, files) => {
+      if (!result) return;
+      const placeholders: ArquivoStatus[] = result.resultados
+        .filter(r => r.arquivo_id)
+        .map(r => {
+          const original = files.find(f => f.name === r.nome_original);
+          return {
+            id: r.arquivo_id!,
+            nome_original: r.nome_original,
+            tamanho_bytes: original?.size ?? 0,
+            status: "PROCESSANDO" as const,
+          };
+        });
+      setFila(prev => [...placeholders, ...prev]);
+      placeholders.forEach(p => pollStatus(p.id));
+
+      const erros = result.resultados.filter(r => r.status === "erro");
+      if (result.sucesso > 0) toast.success(`${result.sucesso} arquivo(s) enviados em lote.`);
+      erros.forEach(e => toast.error(`${e.nome_original}: ${e.erro}`));
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   const uploadFaturamento = useMutation({
     mutationFn: async ({ file, mes }: { file: File; mes: string }) => {
       if (!empresaId) { toast.error("Selecione uma empresa primeiro"); return; }
@@ -313,6 +357,11 @@ const CentralUploads = () => {
       }
       setPendingEstFile(files[0]);
       setShowEstModal(true);
+      return;
+    }
+
+    if (tipo === "extrato" && files.length > 1) {
+      uploadExtratosLote.mutate(files);
       return;
     }
 

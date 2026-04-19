@@ -232,8 +232,21 @@ export async function consolidarRetiradas(empresaId: string): Promise<void> {
     grupos.set(key, g)
   }
 
+  // Para cada sócio, busca valor do pró-labore e desconta antes de decidir tributação.
+  // Pró-labore é remuneração de folha (não é distribuição de lucros), então não conta pro limite.
+  const socioIds = Array.from(new Set(Array.from(grupos.values()).map(g => g.socio_id)))
+  const sociosData = socioIds.length
+    ? await prisma.socio.findMany({
+        where: { id: { in: socioIds } },
+        select: { id: true, valor_prolabore_mensal: true },
+      })
+    : []
+  const prolaborePorSocio = new Map(sociosData.map(s => [s.id, Number(s.valor_prolabore_mensal)]))
+
   for (const g of grupos.values()) {
-    const tributada = g.total > LIMITE_DISTRIBUICAO_ISENTA
+    const prolabore = prolaborePorSocio.get(g.socio_id) ?? 0
+    const distribuicaoLiquida = Math.max(0, g.total - prolabore)
+    const tributada = distribuicaoLiquida > LIMITE_DISTRIBUICAO_ISENTA
     await prisma.retiradaSocio.upsert({
       where: {
         empresa_id_socio_id_mes_ref: {

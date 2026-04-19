@@ -34,6 +34,8 @@ const createSocioSchema = z.object({
   cpf: z.string().min(11, 'CPF inválido').max(14),
   percentual_societario: z.number().min(0.01).max(100),
   limite_isencao: z.number().min(0).optional(),
+  tem_prolabore: z.boolean().optional(),
+  valor_prolabore_mensal: z.number().min(0).optional(),
 })
 
 const listEmpresasQuerySchema = z.object({

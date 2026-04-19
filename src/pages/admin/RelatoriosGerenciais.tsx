@@ -49,6 +49,20 @@ const fmtBRL = (v: number) =>
 const fmtMes = (iso: string) =>
   new Date(iso).toLocaleDateString("pt-BR", { month: "short", year: "numeric", timeZone: "UTC" });
 
+function gerarMeses() {
+  const out: { val: string; label: string }[] = [];
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(Date.UTC(now.getFullYear(), now.getMonth() - i, 1));
+    out.push({
+      val: d.toISOString().slice(0, 7),
+      label: d.toLocaleDateString("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" }),
+    });
+  }
+  return out;
+}
+const MESES = gerarMeses();
+
 const statusBadge = (status: "OK" | "AVISO" | "ALERTA", pct: number) => {
   const pctStr = `${Number(pct).toFixed(1)}%`;
   if (status === "OK")
@@ -73,6 +87,7 @@ const statusBadge = (status: "OK" | "AVISO" | "ALERTA", pct: number) => {
 const RelatoriosGerenciais = () => {
   const [empresaFiltro, setEmpresaFiltro] = useState<string>("all");
   const [statusFiltro, setStatusFiltro] = useState<string>("all");
+  const [mesFiltro, setMesFiltro] = useState<string>("all");
   const [page, setPage] = useState(1);
   const LIMIT = 10;
   const [showEmailModal, setShowEmailModal] = useState(false);
@@ -90,9 +105,10 @@ const RelatoriosGerenciais = () => {
   const queryParams = new URLSearchParams({ limit: String(LIMIT), page: String(page) });
   if (empresaFiltro && empresaFiltro !== "all") queryParams.set("empresa_id", empresaFiltro);
   if (statusFiltro && statusFiltro !== "all") queryParams.set("status", statusFiltro);
+  if (mesFiltro && mesFiltro !== "all") queryParams.set("mes_ref", mesFiltro);
 
   const { data, isLoading, refetch } = useQuery<RelatoriosResponse>({
-    queryKey: ["relatorios", empresaFiltro, statusFiltro, page],
+    queryKey: ["relatorios", empresaFiltro, statusFiltro, mesFiltro, page],
     queryFn: () => api.get<RelatoriosResponse>(`/relatorio-desconforto?${queryParams}`),
   });
 
@@ -169,6 +185,39 @@ const RelatoriosGerenciais = () => {
     }
   };
 
+  const downloadAllMonth = async () => {
+    if (mesFiltro === "all") {
+      toast.info("Selecione um mês para baixar todos os relatórios.");
+      return;
+    }
+    setZipLoading(true);
+    try {
+      const lp = new URLSearchParams({ limit: "500", page: "1", mes_ref: mesFiltro });
+      if (empresaFiltro !== "all") lp.set("empresa_id", empresaFiltro);
+      if (statusFiltro !== "all") lp.set("status", statusFiltro);
+
+      const lista = await api.get<RelatoriosResponse>(`/relatorio-desconforto?${lp}`);
+      const ids = lista.data.map(r => r.id);
+      if (ids.length === 0) {
+        toast.info("Nenhum relatório encontrado para o mês selecionado.");
+        return;
+      }
+
+      const blob = await api.downloadBlob(`/relatorio-desconforto/export-zip?ids=${ids.join(",")}`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `thinqi_relatorios_${mesFiltro}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${ids.length} relatório(s) de ${mesFiltro} baixados em ZIP`);
+    } catch {
+      toast.error("Erro ao gerar ZIP do mês");
+    } finally {
+      setZipLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -183,6 +232,12 @@ const RelatoriosGerenciais = () => {
             <Button size="sm" className="gap-2" onClick={downloadZip} disabled={zipLoading}>
               {zipLoading ? <Loader2 size={14} className="animate-spin" /> : <Archive size={14} />}
               Baixar ZIP ({selectedIds.size})
+            </Button>
+          )}
+          {selectedIds.size === 0 && mesFiltro !== "all" && (
+            <Button size="sm" className="gap-2" onClick={downloadAllMonth} disabled={zipLoading}>
+              {zipLoading ? <Loader2 size={14} className="animate-spin" /> : <Archive size={14} />}
+              Baixar todos os relatórios do mês
             </Button>
           )}
           <Button variant="outline" size="sm" className="gap-2" onClick={() => refetch()}>
@@ -214,6 +269,17 @@ const RelatoriosGerenciais = () => {
             <SelectItem value="OK">OK (≤ 2%)</SelectItem>
             <SelectItem value="AVISO">Atenção (2-5%)</SelectItem>
             <SelectItem value="ALERTA">Alerta (&gt; 5%)</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={mesFiltro} onValueChange={v => { setMesFiltro(v); setPage(1); }}>
+          <SelectTrigger className="w-full sm:w-[200px] h-9">
+            <SelectValue placeholder="Todos os meses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos os meses</SelectItem>
+            {MESES.map(m => (
+              <SelectItem key={m.val} value={m.val} className="capitalize">{m.label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>

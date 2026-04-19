@@ -111,6 +111,78 @@ async function processarArquivo(
   }
 }
 
+export async function uploadArquivosLote(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const files = (req.files as Express.Multer.File[] | undefined) ?? []
+    if (files.length === 0) throw new AppError(400, 'Nenhum arquivo enviado')
+
+    const { empresa_id } = req.body as { empresa_id?: string }
+    if (!empresa_id) throw new AppError(400, 'empresa_id obrigatório')
+
+    const empresa = await prisma.empresa.findUnique({ where: { id: empresa_id } })
+    if (!empresa) throw new AppError(404, 'Empresa não encontrada')
+
+    const resultados: Array<{
+      nome_original: string
+      arquivo_id: string | null
+      status: 'criado' | 'erro'
+      erro: string | null
+    }> = []
+
+    for (const file of files) {
+      try {
+        const ext = path.extname(file.originalname).toLowerCase()
+        let tipo: TipoArquivo
+        if (ext === '.ofx') tipo = TipoArquivo.OFX
+        else if (ext === '.csv') tipo = TipoArquivo.CSV
+        else if (['.xlsx', '.xls'].includes(ext)) tipo = TipoArquivo.PLANILHA
+        else throw new Error('Tipo de arquivo não suportado. Use OFX, CSV ou XLSX.')
+
+        const arquivo = await prisma.arquivoUpload.create({
+          data: {
+            empresa_id,
+            tipo,
+            nome_original: file.originalname,
+            nome_storage: file.filename,
+            tamanho_bytes: file.size,
+            status: StatusArquivo.PENDENTE,
+            uploaded_by: req.user!.id,
+          },
+        })
+
+        processarArquivo(arquivo.id, file.path, tipo, empresa_id).catch(err => {
+          console.error(`[UPLOAD-LOTE] Erro ao processar arquivo ${arquivo.id}:`, err)
+        })
+
+        resultados.push({
+          nome_original: file.originalname,
+          arquivo_id: arquivo.id,
+          status: 'criado',
+          erro: null,
+        })
+      } catch (e) {
+        resultados.push({
+          nome_original: file.originalname,
+          arquivo_id: null,
+          status: 'erro',
+          erro: e instanceof Error ? e.message : 'Erro desconhecido',
+        })
+      }
+    }
+
+    const total = resultados.length
+    const sucesso = resultados.filter(r => r.status === 'criado').length
+    res.status(201).json({
+      total,
+      sucesso,
+      falha: total - sucesso,
+      resultados,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
 export async function statusUpload(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const arquivo = await prisma.arquivoUpload.findUnique({

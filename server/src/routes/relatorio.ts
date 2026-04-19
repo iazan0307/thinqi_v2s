@@ -24,8 +24,9 @@ const gerarSchema = z.object({
 const listQuerySchema = z.object({
   empresa_id: z.string().optional(),
   status: z.enum(['OK', 'AVISO', 'ALERTA']).optional(),
+  mes_ref: z.string().regex(/^\d{4}-\d{2}$/, 'mes_ref no formato YYYY-MM').optional(),
   page: z.coerce.number().min(1).optional(),
-  limit: z.coerce.number().min(1).max(100).optional(),
+  limit: z.coerce.number().min(1).max(500).optional(),
 })
 
 router.get('/', requireRole(Role.ADMIN, Role.CONTADOR), validate(listQuerySchema, 'query'), listRelatorios)

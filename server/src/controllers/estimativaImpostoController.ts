@@ -2,14 +2,16 @@
  * Estimativa de Impostos — upload manual de PDF por empresa+mês.
  * Não há cálculo automático: o admin/contador envia o PDF gerado externamente
  * e o cliente visualiza/baixa no portal.
+ *
+ * PDFs ficam no Supabase Storage (bucket "estimativas"), pois o host pode ser
+ * efêmero (Railway recria o disco em cada deploy).
  */
 
 import { Request, Response, NextFunction } from 'express'
-import * as fs from 'fs/promises'
-import * as path from 'path'
 import { prisma } from '../utils/prisma'
 import { AppError } from '../middleware/errorHandler'
 import { Role } from '@prisma/client'
+import { uploadPDF, downloadPDF, deletePDF } from '../utils/storage'
 
 function parseMesRef(mes: string): Date {
   const [year, month] = mes.split('-').map(Number)
@@ -17,6 +19,13 @@ function parseMesRef(mes: string): Date {
     throw new AppError(422, 'Formato de mês inválido. Use YYYY-MM')
   }
   return new Date(Date.UTC(year, month - 1, 1))
+}
+
+function buildStorageKey(empresa_id: string, mesRef: Date): string {
+  // Timestamp na key torna cada upload único: evita colisão de cache no CDN
+  // do Supabase quando o admin substitui o PDF de um mesmo mês.
+  const mes = mesRef.toISOString().slice(0, 7) // YYYY-MM
+  return `${empresa_id}/${mes}/${Date.now()}.pdf`
 }
 
 /** POST /api/estimativa-imposto/upload */
@@ -32,28 +41,32 @@ export async function uploadEstimativa(
     if (!file) throw new AppError(400, 'Arquivo PDF obrigatório')
     if (!empresa_id) throw new AppError(400, 'empresa_id obrigatório')
     if (!mes_ref) throw new AppError(400, 'mes_ref obrigatório (formato YYYY-MM)')
+    if (!file.buffer) throw new AppError(500, 'Upload precisa estar em memória (memoryStorage)')
 
     const empresa = await prisma.empresa.findUnique({ where: { id: empresa_id } })
     if (!empresa) throw new AppError(404, 'Empresa não encontrada')
 
     const mesRef = parseMesRef(mes_ref)
+    const key = buildStorageKey(empresa_id, mesRef)
 
-    // Substitui PDF anterior do mesmo mês, se existir
+    // Substitui PDF anterior do mesmo mês, se existir.
+    // Cada upload tem key única (timestamp), então precisamos remover
+    // explicitamente o arquivo antigo do Storage antes de apagar o registro.
     const existente = await prisma.estimativaImpostoPDF.findUnique({
       where: { empresa_id_mes_ref: { empresa_id, mes_ref: mesRef } },
     })
     if (existente) {
-      const oldPath = path.join(process.cwd(), 'uploads', existente.pdf_path)
-      await fs.unlink(oldPath).catch(() => undefined)
+      await deletePDF(existente.pdf_path)
       await prisma.estimativaImpostoPDF.delete({ where: { id: existente.id } })
     }
 
-    const relativePath = `estimativas/${file.filename}`
+    await uploadPDF(key, file.buffer)
+
     const estimativa = await prisma.estimativaImpostoPDF.create({
       data: {
         empresa_id,
         mes_ref: mesRef,
-        pdf_path: relativePath,
+        pdf_path: key, // agora é a chave do Storage, não um path de disco
         nome_original: file.originalname,
         tamanho_bytes: file.size,
         uploaded_by: req.user!.id,
@@ -134,14 +147,12 @@ export async function downloadEstimativa(
     })
     if (!estimativa) throw new AppError(404, 'Estimativa não encontrada')
 
-    // Clientes só podem baixar PDFs da própria empresa
     if (user.role === Role.CLIENTE && user.empresa_id !== estimativa.empresa_id) {
       throw new AppError(403, 'Acesso negado')
     }
 
-    const absolutePath = path.join(process.cwd(), 'uploads', estimativa.pdf_path)
-    const buffer = await fs.readFile(absolutePath).catch(() => null)
-    if (!buffer) throw new AppError(410, 'Arquivo não encontrado em disco')
+    const buffer = await downloadPDF(estimativa.pdf_path)
+    if (!buffer) throw new AppError(410, 'Arquivo não encontrado no Storage')
 
     const mes = new Date(estimativa.mes_ref).toISOString().slice(0, 7)
     const cnpj = estimativa.empresa.cnpj.replace(/\D/g, '') || 'sem_cnpj'
@@ -165,8 +176,7 @@ export async function deleteEstimativa(
     })
     if (!estimativa) throw new AppError(404, 'Estimativa não encontrada')
 
-    const absolutePath = path.join(process.cwd(), 'uploads', estimativa.pdf_path)
-    await fs.unlink(absolutePath).catch(() => undefined)
+    await deletePDF(estimativa.pdf_path)
     await prisma.estimativaImpostoPDF.delete({ where: { id: estimativa.id } })
 
     res.json({ deletado: true })

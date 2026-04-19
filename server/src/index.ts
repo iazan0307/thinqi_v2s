@@ -14,8 +14,10 @@ import { portalRoutes } from './routes/portal'
 import { adminClientesRoutes } from './routes/adminClientes'
 import { usuariosRoutes } from './routes/usuarios'
 import { estimativaImpostoRoutes } from './routes/estimativaImposto'
+import { palavrasChaveRoutes } from './routes/palavrasChave'
 import { errorHandler } from './middleware/errorHandler'
 import { notFound } from './middleware/notFound'
+import { carregarPalavrasChaveCache } from './utils/investimento'
 
 const app = express()
 const PORT = process.env.PORT ?? 3001
@@ -62,6 +64,7 @@ app.use('/api/portal', portalRoutes)
 app.use('/api/admin', adminClientesRoutes)
 app.use('/api/admin/usuarios', usuariosRoutes)
 app.use('/api/estimativa-imposto', estimativaImpostoRoutes)
+app.use('/api/palavras-chave-investimento', palavrasChaveRoutes)
 
 // ─── Error handling ───────────────────────────────────────────────────────────
 
@@ -73,6 +76,9 @@ app.use(errorHandler)
 app.listen(PORT, () => {
   console.log(`🚀 ThinQi API rodando em http://localhost:${PORT}`)
   console.log(`   Ambiente: ${process.env.NODE_ENV ?? 'development'}`)
+  carregarPalavrasChaveCache().catch(err => {
+    console.error('[STARTUP] Falha ao carregar palavras-chave de investimento:', err)
+  })
 })
 
 export default app

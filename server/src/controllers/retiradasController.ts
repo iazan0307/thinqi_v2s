@@ -49,7 +49,7 @@ export async function listRetiradas(req: Request, res: Response, next: NextFunct
         take: limit,
         orderBy: [{ mes_ref: 'desc' }, { valor_total: 'desc' }],
         include: {
-          socio: { select: { nome: true, cpf_mascara: true } },
+          socio: { select: { nome: true, cpf_mascara: true, valor_prolabore_mensal: true } },
           empresa: { select: { razao_social: true } },
         },
       }),
@@ -57,9 +57,13 @@ export async function listRetiradas(req: Request, res: Response, next: NextFunct
 
     const data = retiradas.map(r => {
       const valor = Number(r.valor_total)
+      const prolabore = Number(r.socio.valor_prolabore_mensal ?? 0)
+      const valorDistribuicao = Math.max(0, valor - prolabore)
       return {
         ...r,
-        ir_devido: calcularIrDevido(valor),
+        valor_prolabore: prolabore,
+        valor_distribuicao: valorDistribuicao,
+        ir_devido: calcularIrDevido(valorDistribuicao),
         status_distribuicao: r.alerta_limite
           ? STATUS_DISTRIBUICAO.TRIBUTADA
           : STATUS_DISTRIBUICAO.ISENTA,
@@ -100,18 +104,20 @@ export async function exportRetiradas(req: Request, res: Response, next: NextFun
       where,
       orderBy: [{ mes_ref: 'desc' }, { valor_total: 'desc' }],
       include: {
-        socio: { select: { nome: true, cpf_mascara: true } },
+        socio: { select: { nome: true, cpf_mascara: true, valor_prolabore_mensal: true } },
         empresa: { select: { razao_social: true } },
       },
     })
 
     if (fmt === 'csv') {
-      const header = 'Empresa,Sócio,CPF,Mês Referência,Valor Total (R$),Qtd Transferências,Status,IR Devido (R$)'
+      const header = 'Empresa,Sócio,CPF,Mês Referência,Valor Total (R$),Pró-labore (R$),Distribuição (R$),Qtd Transferências,Status,IR Devido (R$)'
       const rows = retiradas.map(r => {
         const mesRef = new Date(r.mes_ref)
         const mesStr = `${String(mesRef.getUTCMonth() + 1).padStart(2, '0')}/${mesRef.getUTCFullYear()}`
         const valor = Number(r.valor_total)
-        const ir = calcularIrDevido(valor)
+        const prolabore = Number(r.socio.valor_prolabore_mensal ?? 0)
+        const distribuicao = Math.max(0, valor - prolabore)
+        const ir = calcularIrDevido(distribuicao)
         const status = r.alerta_limite
           ? STATUS_DISTRIBUICAO.TRIBUTADA
           : STATUS_DISTRIBUICAO.ISENTA
@@ -121,6 +127,8 @@ export async function exportRetiradas(req: Request, res: Response, next: NextFun
           `"${r.socio.cpf_mascara}"`,
           mesStr,
           valor.toFixed(2).replace('.', ','),
+          prolabore.toFixed(2).replace('.', ','),
+          distribuicao.toFixed(2).replace('.', ','),
           r.qtd_transferencias,
           `"${status}"`,
           ir.toFixed(2).replace('.', ','),
@@ -146,6 +154,8 @@ export async function exportRetiradas(req: Request, res: Response, next: NextFun
       { header: 'CPF',                 key: 'cpf',             width: 18 },
       { header: 'Mês Referência',      key: 'mes',             width: 14 },
       { header: 'Valor Total (R$)',    key: 'valor',           width: 16 },
+      { header: 'Pró-labore (R$)',     key: 'prolabore',       width: 16 },
+      { header: 'Distribuição (R$)',   key: 'distribuicao',    width: 18 },
       { header: 'Qtd Transferências',  key: 'qtd',             width: 18 },
       { header: 'Status',              key: 'status',          width: 24 },
       { header: 'IR Devido (R$)',      key: 'ir',              width: 16 },
@@ -156,7 +166,9 @@ export async function exportRetiradas(req: Request, res: Response, next: NextFun
       const mesRef = new Date(r.mes_ref)
       const mesStr = `${String(mesRef.getUTCMonth() + 1).padStart(2, '0')}/${mesRef.getUTCFullYear()}`
       const valor  = Number(r.valor_total)
-      const ir     = calcularIrDevido(valor)
+      const prolabore = Number(r.socio.valor_prolabore_mensal ?? 0)
+      const distribuicao = Math.max(0, valor - prolabore)
+      const ir     = calcularIrDevido(distribuicao)
       const status = r.alerta_limite
         ? STATUS_DISTRIBUICAO.TRIBUTADA
         : STATUS_DISTRIBUICAO.ISENTA
@@ -167,14 +179,18 @@ export async function exportRetiradas(req: Request, res: Response, next: NextFun
         cpf:     r.socio.cpf_mascara,
         mes:     mesStr,
         valor,
+        prolabore,
+        distribuicao,
         qtd:     r.qtd_transferencias,
         status,
         ir,
       })
     }
 
-    ws.getColumn('valor').numFmt = 'R$ #,##0.00'
-    ws.getColumn('ir').numFmt    = 'R$ #,##0.00'
+    ws.getColumn('valor').numFmt        = 'R$ #,##0.00'
+    ws.getColumn('prolabore').numFmt    = 'R$ #,##0.00'
+    ws.getColumn('distribuicao').numFmt = 'R$ #,##0.00'
+    ws.getColumn('ir').numFmt           = 'R$ #,##0.00'
 
     res.setHeader(
       'Content-Type',

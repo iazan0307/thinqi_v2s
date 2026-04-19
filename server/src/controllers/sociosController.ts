@@ -26,6 +26,7 @@ export async function listSocios(req: Request, res: Response, next: NextFunction
         percentual_societario: true,
         limite_isencao: true,
         tem_prolabore: true,
+        valor_prolabore_mensal: true,
         ativo: true,
         created_at: true,
       },
@@ -40,12 +41,13 @@ export async function listSocios(req: Request, res: Response, next: NextFunction
 export async function createSocio(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { empresaId } = req.params
-    const { nome, cpf, percentual_societario, limite_isencao, tem_prolabore } = req.body as {
+    const { nome, cpf, percentual_societario, limite_isencao, tem_prolabore, valor_prolabore_mensal } = req.body as {
       nome: string
       cpf: string
       percentual_societario: number
       limite_isencao?: number
       tem_prolabore?: boolean
+      valor_prolabore_mensal?: number
     }
 
     const empresa = await prisma.empresa.findUnique({ where: { id: empresaId } })
@@ -75,6 +77,7 @@ export async function createSocio(req: Request, res: Response, next: NextFunctio
         percentual_societario,
         ...(limite_isencao !== undefined && { limite_isencao }),
         ...(tem_prolabore !== undefined && { tem_prolabore }),
+        ...(valor_prolabore_mensal !== undefined && { valor_prolabore_mensal }),
       },
       select: {
         id: true,
@@ -83,6 +86,7 @@ export async function createSocio(req: Request, res: Response, next: NextFunctio
         percentual_societario: true,
         limite_isencao: true,
         tem_prolabore: true,
+        valor_prolabore_mensal: true,
         ativo: true,
         created_at: true,
       },
@@ -111,11 +115,12 @@ export async function deleteSocio(req: Request, res: Response, next: NextFunctio
 export async function updateSocio(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params
-    const { nome, percentual_societario, limite_isencao, tem_prolabore, ativo } = req.body as {
+    const { nome, percentual_societario, limite_isencao, tem_prolabore, valor_prolabore_mensal, ativo } = req.body as {
       nome?: string
       percentual_societario?: number
       limite_isencao?: number
       tem_prolabore?: boolean
+      valor_prolabore_mensal?: number
       ativo?: boolean
     }
 
@@ -129,6 +134,7 @@ export async function updateSocio(req: Request, res: Response, next: NextFunctio
         ...(percentual_societario !== undefined && { percentual_societario }),
         ...(limite_isencao !== undefined && { limite_isencao }),
         ...(tem_prolabore !== undefined && { tem_prolabore }),
+        ...(valor_prolabore_mensal !== undefined && { valor_prolabore_mensal }),
         ...(ativo !== undefined && { ativo }),
       },
       select: {
@@ -138,6 +144,7 @@ export async function updateSocio(req: Request, res: Response, next: NextFunctio
         percentual_societario: true,
         limite_isencao: true,
         tem_prolabore: true,
+        valor_prolabore_mensal: true,
         ativo: true,
         updated_at: true,
       },

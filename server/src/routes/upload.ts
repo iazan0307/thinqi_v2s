@@ -2,7 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import * as path from 'path'
 import * as fs from 'fs'
-import { uploadArquivo, statusUpload, confirmarUpload } from '../controllers/uploadController'
+import { uploadArquivo, uploadArquivosLote, statusUpload, confirmarUpload } from '../controllers/uploadController'
 import { authenticate, requireRole } from '../middleware/auth'
 import { Role } from '@prisma/client'
 
@@ -41,6 +41,9 @@ router.use(authenticate)
 
 // POST /api/upload
 router.post('/', requireRole(Role.ADMIN, Role.CONTADOR), upload.single('arquivo'), uploadArquivo)
+
+// POST /api/upload/lote — múltiplos arquivos
+router.post('/lote', requireRole(Role.ADMIN, Role.CONTADOR), upload.array('arquivos', 50), uploadArquivosLote)
 
 // GET /api/upload/status/:id
 router.get('/status/:id', statusUpload)

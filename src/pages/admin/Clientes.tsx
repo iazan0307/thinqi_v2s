@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { UserPlus, Loader2, Users, CheckCircle2, XCircle, Trash2 } from "lucide-react";
+import { UserPlus, Loader2, Users, CheckCircle2, XCircle, Trash2, Copy, AlertTriangle } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Pagination } from "@/components/Pagination";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -58,6 +58,31 @@ const Clientes = () => {
   const [empresaId, setEmpresaId] = useState("");
   const [perfilCliente, setPerfilCliente] = useState<PerfilCliente>("SOCIO");
 
+  // Fallback quando o e-mail não pôde ser enviado
+  const [credenciaisManuais, setCredenciaisManuais] = useState<{
+    email: string;
+    senha: string;
+    loginUrl: string;
+    erro: string | null;
+  } | null>(null);
+
+  interface ConviteResposta {
+    usuario: { id: string; nome: string; email: string };
+    convite_enviado: boolean;
+    erro_envio: string | null;
+    senha_temporaria: string;
+    login_url: string;
+  }
+
+  const copiar = async (texto: string) => {
+    try {
+      await navigator.clipboard.writeText(texto);
+      toast.success("Copiado!");
+    } catch {
+      toast.error("Não foi possível copiar");
+    }
+  };
+
   const { data: empresasData } = useQuery<EmpresasResponse>({
     queryKey: ["empresas"],
     queryFn: () => api.get<EmpresasResponse>("/empresas?limit=100"),
@@ -72,17 +97,27 @@ const Clientes = () => {
 
   const convidar = useMutation({
     mutationFn: () =>
-      api.post("/admin/clientes/convidar", {
+      api.post<ConviteResposta>("/admin/clientes/convidar", {
         nome,
         email,
         empresa_id: empresaId,
         perfil_cliente: perfilCliente,
       }),
-    onSuccess: () => {
+    onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["clientes"] });
       setShowConvite(false);
+      const emailUsado = r.usuario.email;
       setNome(""); setEmail(""); setEmpresaId(""); setPerfilCliente("SOCIO");
-      toast.success("Convite enviado! O cliente receberá as credenciais por e-mail.");
+      if (r.convite_enviado) {
+        toast.success("Convite enviado! O cliente receberá as credenciais por e-mail.");
+      } else {
+        setCredenciaisManuais({
+          email: emailUsado,
+          senha: r.senha_temporaria,
+          loginUrl: r.login_url,
+          erro: r.erro_envio,
+        });
+      }
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -318,6 +353,59 @@ const Clientes = () => {
               {convidar.isPending && <Loader2 size={14} className="animate-spin mr-1" />}
               Enviar Convite
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Fallback de credenciais quando o e-mail falhou */}
+      <Dialog open={!!credenciaisManuais} onOpenChange={v => !v && setCredenciaisManuais(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle size={18} className="text-amber-500" />
+              Cliente criado, mas o e-mail falhou
+            </DialogTitle>
+            <DialogDescription>
+              O servidor SMTP não respondeu, mas o cadastro foi concluído.
+              Envie estas credenciais manualmente ao cliente.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">E-mail</Label>
+              <div className="flex gap-2">
+                <Input readOnly value={credenciaisManuais?.email ?? ""} />
+                <Button variant="outline" size="icon" onClick={() => copiar(credenciaisManuais?.email ?? "")}>
+                  <Copy size={14} />
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Senha temporária</Label>
+              <div className="flex gap-2">
+                <Input readOnly className="font-mono" value={credenciaisManuais?.senha ?? ""} />
+                <Button variant="outline" size="icon" onClick={() => copiar(credenciaisManuais?.senha ?? "")}>
+                  <Copy size={14} />
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Link de acesso</Label>
+              <div className="flex gap-2">
+                <Input readOnly value={credenciaisManuais?.loginUrl ?? ""} />
+                <Button variant="outline" size="icon" onClick={() => copiar(credenciaisManuais?.loginUrl ?? "")}>
+                  <Copy size={14} />
+                </Button>
+              </div>
+            </div>
+            {credenciaisManuais?.erro && (
+              <p className="text-xs text-muted-foreground break-all">
+                Detalhe do erro SMTP: {credenciaisManuais.erro}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setCredenciaisManuais(null)}>Entendi</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

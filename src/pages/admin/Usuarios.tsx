@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { UserPlus, Loader2, Users, CheckCircle2, XCircle, ShieldCheck, Calculator, KeyRound, Pencil } from "lucide-react";
+import { UserPlus, Loader2, Users, CheckCircle2, XCircle, ShieldCheck, Calculator, KeyRound, Pencil, Copy, AlertTriangle } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Pagination } from "@/components/Pagination";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -76,6 +76,28 @@ const Usuarios = () => {
   // Confirmação de reset de senha
   const [resetTarget, setResetTarget] = useState<Usuario | null>(null);
 
+  // Fallback quando o e-mail não pôde ser enviado (mostra senha temp para repasse manual)
+  const [credenciaisManuais, setCredenciaisManuais] = useState<{
+    titulo: string;
+    email: string;
+    senha: string;
+    erro: string | null;
+  } | null>(null);
+
+  interface CriarResposta {
+    usuario: { id: string; nome: string; email: string; role: string };
+    convite_enviado: boolean;
+    erro_envio: string | null;
+    senha_temporaria: string;
+  }
+
+  interface ResetResposta {
+    resetado: boolean;
+    email_enviado: boolean;
+    erro_envio: string | null;
+    senha_temporaria: string;
+  }
+
   const { data, isLoading } = useQuery<UsuariosResponse>({
     queryKey: ["usuarios-internos", page],
     queryFn: () => api.get<UsuariosResponse>(`/admin/usuarios?limit=${LIMIT}&page=${page}`),
@@ -83,12 +105,22 @@ const Usuarios = () => {
   const usuarios = data?.data ?? [];
 
   const criar = useMutation({
-    mutationFn: () => api.post("/admin/usuarios", { nome, email, role }),
-    onSuccess: () => {
+    mutationFn: () => api.post<CriarResposta>("/admin/usuarios", { nome, email, role }),
+    onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["usuarios-internos"] });
       setShowNovo(false);
+      const emailUsuario = r.usuario.email;
       setNome(""); setEmail(""); setRole("CONTADOR");
-      toast.success("Usuário criado! As credenciais foram enviadas por e-mail.");
+      if (r.convite_enviado) {
+        toast.success("Usuário criado! As credenciais foram enviadas por e-mail.");
+      } else {
+        setCredenciaisManuais({
+          titulo: "Usuário criado, mas o e-mail falhou",
+          email: emailUsuario,
+          senha: r.senha_temporaria,
+          erro: r.erro_envio,
+        });
+      }
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -115,13 +147,32 @@ const Usuarios = () => {
   });
 
   const resetSenha = useMutation({
-    mutationFn: (id: string) => api.post(`/admin/usuarios/${id}/resetar-senha`, {}),
-    onSuccess: () => {
+    mutationFn: (id: string) => api.post<ResetResposta>(`/admin/usuarios/${id}/resetar-senha`, {}),
+    onSuccess: (r) => {
+      const alvoEmail = resetTarget?.email ?? "";
       setResetTarget(null);
-      toast.success("Nova senha enviada por e-mail.");
+      if (r.email_enviado) {
+        toast.success("Nova senha enviada por e-mail.");
+      } else {
+        setCredenciaisManuais({
+          titulo: "Senha redefinida, mas o e-mail falhou",
+          email: alvoEmail,
+          senha: r.senha_temporaria,
+          erro: r.erro_envio,
+        });
+      }
     },
     onError: (err: Error) => toast.error(err.message),
   });
+
+  const copiar = async (texto: string) => {
+    try {
+      await navigator.clipboard.writeText(texto);
+      toast.success("Copiado!");
+    } catch {
+      toast.error("Não foi possível copiar");
+    }
+  };
 
   const openEdit = (u: Usuario) => {
     setEditTarget(u);
@@ -361,6 +412,50 @@ const Usuarios = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── Fallback de credenciais quando o e-mail não pôde ser enviado ── */}
+      <Dialog open={!!credenciaisManuais} onOpenChange={v => !v && setCredenciaisManuais(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle size={18} className="text-amber-500" />
+              {credenciaisManuais?.titulo}
+            </DialogTitle>
+            <DialogDescription>
+              O servidor SMTP não respondeu, mas a operação foi concluída no banco.
+              Envie estas credenciais manualmente ao usuário.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">E-mail</Label>
+              <div className="flex gap-2">
+                <Input readOnly value={credenciaisManuais?.email ?? ""} />
+                <Button variant="outline" size="icon" onClick={() => copiar(credenciaisManuais?.email ?? "")}>
+                  <Copy size={14} />
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Senha temporária</Label>
+              <div className="flex gap-2">
+                <Input readOnly className="font-mono" value={credenciaisManuais?.senha ?? ""} />
+                <Button variant="outline" size="icon" onClick={() => copiar(credenciaisManuais?.senha ?? "")}>
+                  <Copy size={14} />
+                </Button>
+              </div>
+            </div>
+            {credenciaisManuais?.erro && (
+              <p className="text-xs text-muted-foreground break-all">
+                Detalhe do erro SMTP: {credenciaisManuais.erro}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setCredenciaisManuais(null)}>Entendi</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

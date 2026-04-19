@@ -19,6 +19,7 @@ import Conciliacao from "./pages/admin/Conciliacao";
 import RelatoriosGerenciais from "./pages/admin/RelatoriosGerenciais";
 import Usuarios from "./pages/admin/Usuarios";
 import Retiradas from "./pages/admin/Retiradas";
+import PalavrasChave from "./pages/admin/PalavrasChave";
 import Clientes from "./pages/admin/Clientes";
 import NotFound from "./pages/NotFound";
 
@@ -84,6 +85,7 @@ const App = () => (
               <Route path="clientes" element={<Clientes />} />
               <Route path="usuarios" element={<Usuarios />} />
               <Route path="retiradas" element={<Retiradas />} />
+              <Route path="palavras-chave" element={<PalavrasChave />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -26,7 +26,9 @@ interface Retirada {
   alerta_limite: boolean;
   ir_devido?: number;
   status_distribuicao?: string;
-  socio: { nome: string; cpf_mascara: string };
+  valor_prolabore?: number;
+  valor_distribuicao?: number;
+  socio: { nome: string; cpf_mascara: string; valor_prolabore_mensal?: number | string };
   empresa: { razao_social: string };
 }
 
@@ -201,6 +203,8 @@ const Retiradas = () => {
                       <TableHead className="hidden sm:table-cell">CPF</TableHead>
                       <TableHead className="hidden md:table-cell">Mês</TableHead>
                       <TableHead className="text-right">Retiradas</TableHead>
+                      <TableHead className="text-right hidden lg:table-cell">Pró-labore</TableHead>
+                      <TableHead className="text-right hidden lg:table-cell">Distribuição</TableHead>
                       <TableHead className="text-right">IR Devido</TableHead>
                       <TableHead className="text-center hidden sm:table-cell">Transferências</TableHead>
                       <TableHead className="text-center">Status</TableHead>
@@ -209,7 +213,11 @@ const Retiradas = () => {
                   <TableBody>
                     {retiradas.map((r) => {
                       const valor = Number(r.valor_total);
-                      const ir = r.ir_devido ?? calcularIrDevido(valor);
+                      const prolabore = Number(r.valor_prolabore ?? 0);
+                      const distribuicao = r.valor_distribuicao !== undefined
+                        ? Number(r.valor_distribuicao)
+                        : Math.max(0, valor - prolabore);
+                      const ir = r.ir_devido ?? calcularIrDevido(distribuicao);
                       return (
                         <TableRow key={r.id} className={r.alerta_limite ? "bg-[hsl(var(--kpi-red-bg))]/40" : ""}>
                           <TableCell className="text-sm font-medium">{r.empresa.razao_social}</TableCell>
@@ -222,6 +230,12 @@ const Retiradas = () => {
                           </TableCell>
                           <TableCell className="text-right tabular-nums font-semibold">
                             {fmtBRL(valor)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums hidden lg:table-cell text-muted-foreground">
+                            {prolabore > 0 ? fmtBRL(prolabore) : "—"}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums hidden lg:table-cell">
+                            {fmtBRL(distribuicao)}
                           </TableCell>
                           <TableCell className={`text-right tabular-nums ${ir > 0 ? "text-[hsl(var(--kpi-red))] font-semibold" : "text-muted-foreground"}`}>
                             {ir > 0 ? fmtBRL(ir) : "Isento"}

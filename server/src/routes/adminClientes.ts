@@ -4,6 +4,7 @@ import { authenticate, requireRole } from '../middleware/auth'
 import { validate } from '../middleware/validate'
 import {
   listArquivos,
+  deleteArquivo,
   listClientes,
   convidarCliente,
   toggleCliente,
@@ -33,6 +34,7 @@ const toggleSchema = z.object({
 })
 
 router.get('/arquivos', listArquivos)
+router.delete('/arquivos/:id', deleteArquivo)
 router.get('/clientes', listClientes)
 router.post('/clientes/convidar', validate(convidarSchema), convidarCliente)
 router.put('/clientes/:id/ativo', validate(toggleSchema), toggleCliente)

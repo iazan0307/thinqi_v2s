@@ -1,7 +1,8 @@
 /**
  * Parser para extratos de operadoras de cartão brasileiras.
- * Suporta: Cielo, Stone, Rede, PagSeguro e formato genérico.
- * Aceita CSV e XLSX. Detecta o adquirente automaticamente pelo cabeçalho do arquivo.
+ * Suporta: Cielo, Stone, Rede, PagSeguro, Getnet, SafraPay e genérico.
+ * Aceita CSV e XLSX. Detecta o adquirente por filename + conteúdo e encontra
+ * a linha de cabeçalho automaticamente (Cielo/Rede têm headers fora da linha 1).
  */
 
 import ExcelJS from 'exceljs'
@@ -15,6 +16,12 @@ export interface TransacaoCartaoParseada {
   valor_liquido: number
 }
 
+export interface CartaoParseResult {
+  /** CNPJ normalizado (14 dígitos) extraído do arquivo, se encontrado */
+  cnpj_detectado: string | null
+  transacoes: TransacaoCartaoParseada[]
+}
+
 function norm(s: string): string {
   return s
     .toLowerCase()
@@ -25,15 +32,20 @@ function norm(s: string): string {
 
 function parseBRL(s: string): number {
   if (!s) return 0
-  const clean = s.replace(/[R$\s]/g, '').replace('.', '').replace(',', '.')
+  const clean = s.replace(/[R$\s]/g, '').replace(/\./g, '').replace(',', '.')
   const n = parseFloat(clean)
   return isNaN(n) ? 0 : n
 }
 
 function parseDate(s: string): Date {
   const clean = s.trim()
+  // ISO datetime: 2026-01-21T00:00:00.000Z
+  if (/^\d{4}-\d{2}-\d{2}T/.test(clean)) {
+    const d = new Date(clean)
+    if (!isNaN(d.getTime())) return d
+  }
   // DD/MM/YYYY or DD-MM-YYYY
-  const m = clean.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/)
+  const m = clean.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})/)
   if (m) return new Date(Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])))
   // YYYY-MM-DD
   const m2 = clean.match(/^(\d{4})-(\d{2})-(\d{2})/)
@@ -60,80 +72,109 @@ function normBandeira(s: string): string {
   return s.toUpperCase().trim() || 'OUTROS'
 }
 
-/** Detecta o adquirente pelo conteúdo do cabeçalho */
-function detectAdquirente(header: string): string {
-  const h = header.toLowerCase()
+/** Detecta o adquirente pelo conteúdo (nome do arquivo + primeiras linhas + nome da sheet) */
+function detectAdquirente(text: string): string {
+  const h = text.toLowerCase()
   if (h.includes('cielo')) return 'CIELO'
   if (h.includes('stone')) return 'STONE'
   if (h.includes('rede') || h.includes('redecard')) return 'REDE'
-  if (h.includes('pagseguro') || h.includes('pag seguro')) return 'PAGSEGURO'
+  if (h.includes('pagseguro') || h.includes('pag seguro') || h.includes('pagbank')) return 'PAGSEGURO'
   if (h.includes('getnet')) return 'GETNET'
-  if (h.includes('safrapay')) return 'SAFRAPAY'
+  if (h.includes('safrapay') || h.includes('safra pay')) return 'SAFRAPAY'
   return 'GENERICO'
 }
 
-// ─── Parsers por adquirente ───────────────────────────────────────────────────
-
 /**
- * Formato Cielo:
- * Data;Bandeira;Tipo;Valor Bruto;Taxa (%);Valor Líquido
+ * Extrai o CNPJ do arquivo varrendo todas as células até encontrar o primeiro
+ * padrão válido. Aceita tanto formatado (30.776.724/0001-92) quanto digitado
+ * (33063484000177) e devolve 14 dígitos normalizados.
  */
-function parseCielo(rows: string[][], adquirente: string): TransacaoCartaoParseada[] {
-  return rows
-    .map(cols => {
-      const bruto = parseBRL(cols[3] ?? '')
-      const taxaPct = parseFloat((cols[4] ?? '0').replace(',', '.')) / 100
-      const liquido = parseBRL(cols[5] ?? '') || bruto * (1 - taxaPct)
-      if (bruto <= 0) return null
-      return {
-        data: parseDate(cols[0] ?? ''),
-        bandeira: normBandeira(cols[1] ?? ''),
-        adquirente,
-        valor_bruto: bruto,
-        taxa: taxaPct,
-        valor_liquido: liquido,
-      } as TransacaoCartaoParseada
-    })
-    .filter((r): r is TransacaoCartaoParseada => r !== null)
+function extractCNPJ(rows: string[][]): string | null {
+  // Formato com pontuação OU 14 dígitos consecutivos com fronteira
+  const re = /\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|(?<!\d)\d{14}(?!\d)/
+  for (const row of rows) {
+    for (const cell of row) {
+      if (!cell) continue
+      const m = cell.match(re)
+      if (m) {
+        const digits = m[0].replace(/\D/g, '')
+        if (digits.length === 14) return digits
+      }
+    }
+  }
+  return null
 }
 
 /**
- * Formato Stone:
- * data_pagamento,produto,bandeira,valor_bruto,taxa,valor_liquido
+ * Busca a linha de cabeçalho nas primeiras 30 linhas.
+ * Linha de cabeçalho = tem "bandeira" + alguma coluna de valor.
  */
-function parseStone(rows: string[][], adquirente: string): TransacaoCartaoParseada[] {
-  return rows
-    .map(cols => {
-      const bruto = parseBRL(cols[3] ?? '')
-      const taxaVal = parseBRL(cols[4] ?? '')
-      const liquido = parseBRL(cols[5] ?? '') || bruto - taxaVal
-      if (bruto <= 0) return null
-      return {
-        data: parseDate(cols[0] ?? ''),
-        bandeira: normBandeira(cols[2] ?? ''),
-        adquirente,
-        valor_bruto: bruto,
-        taxa: bruto > 0 ? taxaVal / bruto : 0,
-        valor_liquido: liquido,
-      } as TransacaoCartaoParseada
-    })
-    .filter((r): r is TransacaoCartaoParseada => r !== null)
+function findHeaderRowIdx(rows: string[][]): number {
+  for (let i = 0; i < Math.min(rows.length, 30); i++) {
+    const cells = rows[i].map(norm)
+    const hasBandeira = cells.some(c => c === 'bandeira' || c.startsWith('bandeira'))
+    const hasValor = cells.some(c =>
+      c.includes('valorbruto') ||
+      c.includes('valorliquido') ||
+      c.includes('valordavenda') ||
+      c.includes('vendaoriginal'),
+    )
+    if (hasBandeira && hasValor) return i
+  }
+  return -1
 }
 
-/** Parser genérico: detecta colunas por nome */
-function parseGenerico(
+/** Encontra a coluna cujo header bate com alguma keyword, ignorando headers que contenham as palavras de exclusão. */
+function findCol(headers: string[], keywords: string[], exclude: string[] = []): number {
+  for (let i = 0; i < headers.length; i++) {
+    const h = norm(headers[i])
+    if (!h) continue
+    if (exclude.some(k => h.includes(k))) continue
+    if (keywords.some(k => h.includes(k))) return i
+  }
+  return -1
+}
+
+function parseRows(
   headers: string[],
   rows: string[][],
   adquirente: string,
 ): TransacaoCartaoParseada[] {
-  const find = (keywords: string[]) =>
-    headers.findIndex(h => keywords.some(k => norm(h).includes(k)))
+  // Data da venda — evita colunas de cancelamento/previsão/disputa/lançamento
+  let dataIdx = findCol(headers, ['datadavenda', 'datavenda'])
+  if (dataIdx === -1) {
+    dataIdx = findCol(
+      headers,
+      ['data'],
+      ['cancel', 'previ', 'lanc', 'disputa', 'resol', 'emis', 'hora'],
+    )
+  }
 
-  const dataIdx = find(['data', 'date', 'dt'])
-  const bandeiraIdx = find(['bandeira', 'cartao', 'produto', 'brand', 'tipo'])
-  const brutoIdx = find(['bruto', 'gross', 'original', 'venda'])
-  const taxaIdx = find(['taxa', 'mdr', 'fee', 'desconto', 'rate'])
-  const liquidoIdx = find(['liquido', 'liquida', 'net', 'receber', 'creditado'])
+  const bandeiraIdx = findCol(headers, ['bandeira'])
+
+  // Valor bruto — "valor bruto", "valor da venda original"
+  let brutoIdx = findCol(
+    headers,
+    ['valorbruto', 'vendaoriginal', 'valororiginal'],
+    ['atualizado', 'cancel'],
+  )
+  if (brutoIdx === -1) {
+    brutoIdx = findCol(
+      headers,
+      ['valordavenda', 'bruto', 'gross'],
+      ['atualizado', 'cancel', 'liquid', 'mdr', 'taxa'],
+    )
+  }
+
+  // Valor líquido
+  const liquidoIdx = findCol(headers, ['valorliquido', 'liquido'], ['total', 'taxa'])
+
+  // Taxa — preferir taxa MDR / taxa/tarifa; ignorar prazos e embarque
+  let taxaIdx = findCol(headers, ['taxamdr'])
+  if (taxaIdx === -1) taxaIdx = findCol(headers, ['taxatarifa'])
+  if (taxaIdx === -1) {
+    taxaIdx = findCol(headers, ['taxa'], ['prazo', 'recebimento', 'embarque', 'valor'])
+  }
 
   if (brutoIdx === -1 && liquidoIdx === -1) {
     throw new Error('Colunas de valor não encontradas no extrato de cartão')
@@ -143,20 +184,30 @@ function parseGenerico(
     .map(cols => {
       const bruto = brutoIdx >= 0 ? parseBRL(cols[brutoIdx] ?? '') : 0
       const liquido = liquidoIdx >= 0 ? parseBRL(cols[liquidoIdx] ?? '') : 0
-      const taxaRaw = taxaIdx >= 0 ? parseBRL(cols[taxaIdx] ?? '') : 0
-      const valorRef = bruto || liquido
-      if (valorRef <= 0) return null
+      const taxaRaw = Math.abs(taxaIdx >= 0 ? parseBRL(cols[taxaIdx] ?? '') : 0)
 
-      const taxa = bruto > 0 && taxaRaw > 0
-        ? (taxaRaw < 1 ? taxaRaw : taxaRaw / bruto)
-        : (bruto > 0 && liquido > 0 ? (bruto - liquido) / bruto : 0)
+      if (bruto <= 0 && liquido <= 0) return null
+
+      let taxa: number
+      if (taxaRaw > 0 && taxaRaw < 1) {
+        // Já é proporção (ex: Rede → 0.0205)
+        taxa = taxaRaw
+      } else if (taxaRaw >= 1 && bruto > 0) {
+        // Valor em R$ — converte para proporção (ex: Cielo → 8.54 / 700)
+        taxa = taxaRaw / bruto
+      } else if (bruto > 0 && liquido > 0) {
+        taxa = (bruto - liquido) / bruto
+      } else {
+        taxa = 0
+      }
+      taxa = Math.min(Math.max(taxa, 0), 0.5) // sanity cap 50%
 
       return {
         data: dataIdx >= 0 ? parseDate(cols[dataIdx] ?? '') : new Date(),
         bandeira: bandeiraIdx >= 0 ? normBandeira(cols[bandeiraIdx] ?? '') : 'OUTROS',
         adquirente,
-        valor_bruto: bruto || liquido / (1 - taxa),
-        taxa: Math.min(taxa, 0.5),        // sanity cap 50%
+        valor_bruto: bruto || liquido / (1 - taxa || 1),
+        taxa,
         valor_liquido: liquido || bruto * (1 - taxa),
       } as TransacaoCartaoParseada
     })
@@ -165,17 +216,7 @@ function parseGenerico(
 
 // ─── Entrada pública ──────────────────────────────────────────────────────────
 
-function dispatch(
-  headers: string[],
-  rows: string[][],
-  adquirente: string,
-): TransacaoCartaoParseada[] {
-  if (adquirente === 'CIELO') return parseCielo(rows, adquirente)
-  if (adquirente === 'STONE') return parseStone(rows, adquirente)
-  return parseGenerico(headers, rows, adquirente)
-}
-
-export function parseCartaoCSV(content: string): TransacaoCartaoParseada[] {
+export function parseCartaoCSV(content: string, originalName = ''): CartaoParseResult {
   const lines = content
     .split(/\r?\n/)
     .map(l => l.trim())
@@ -183,12 +224,27 @@ export function parseCartaoCSV(content: string): TransacaoCartaoParseada[] {
 
   if (lines.length < 2) throw new Error('Arquivo de cartão vazio ou inválido')
 
-  const adquirente = detectAdquirente(lines[0])
   const delim = detectDelim(lines[0])
-  const headers = lines[0].split(delim).map(h => h.replace(/['"]/g, '').trim())
-  const rows = lines.slice(1).map(l => l.split(delim).map(c => c.replace(/['"]/g, '').trim()))
+  const allRows = lines.map(l =>
+    l.split(delim).map(c => c.replace(/^["']|["']$/g, '').trim()),
+  )
 
-  return dispatch(headers, rows, adquirente)
+  const headerIdx = findHeaderRowIdx(allRows)
+  const cnpj_detectado = extractCNPJ(allRows)
+
+  if (headerIdx === -1) {
+    // Fallback: assume linha 1 é cabeçalho (compat. com formatos simples/legados)
+    const headers = allRows[0]
+    const rows = allRows.slice(1)
+    const adquirente = detectAdquirente([originalName, lines[0]].join(' '))
+    return { cnpj_detectado, transacoes: parseRows(headers, rows, adquirente) }
+  }
+
+  const preambulo = allRows.slice(0, headerIdx).flat().join(' ')
+  const adquirente = detectAdquirente([originalName, preambulo].join(' '))
+  const headers = allRows[headerIdx]
+  const rows = allRows.slice(headerIdx + 1).filter(r => r.some(c => c.length > 0))
+  return { cnpj_detectado, transacoes: parseRows(headers, rows, adquirente) }
 }
 
 function cellToString(val: ExcelJS.CellValue): string {
@@ -210,7 +266,10 @@ function cellToString(val: ExcelJS.CellValue): string {
   return String(val).trim()
 }
 
-export async function parseCartaoXLSX(buffer: Buffer): Promise<TransacaoCartaoParseada[]> {
+export async function parseCartaoXLSX(
+  buffer: Buffer,
+  originalName = '',
+): Promise<CartaoParseResult> {
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.load(buffer as unknown as Parameters<typeof workbook.xlsx.load>[0])
 
@@ -219,39 +278,43 @@ export async function parseCartaoXLSX(buffer: Buffer): Promise<TransacaoCartaoPa
     throw new Error('Planilha de cartão vazia ou inválida')
   }
 
-  const headerRow = sheet.getRow(1)
-  const headers = (headerRow.values as ExcelJS.CellValue[])
-    .slice(1)
-    .map(v => cellToString(v))
-
-  const headerText = [sheet.name, ...headers].join(' ')
-  const adquirente = detectAdquirente(headerText)
-
-  const rows: string[][] = []
-  sheet.eachRow((row, rowNum) => {
-    if (rowNum === 1) return
+  const allRows: string[][] = []
+  sheet.eachRow((row) => {
     const vals = (row.values as ExcelJS.CellValue[]).slice(1).map(v => cellToString(v))
-    if (vals.some(v => v.length > 0)) rows.push(vals)
+    allRows.push(vals)
   })
 
-  if (rows.length === 0) throw new Error('Nenhuma linha de dados encontrada na planilha de cartão')
+  if (allRows.length === 0) {
+    throw new Error('Nenhuma linha de dados encontrada na planilha de cartão')
+  }
 
-  return dispatch(headers, rows, adquirente)
+  const cnpj_detectado = extractCNPJ(allRows)
+  const headerIdx = findHeaderRowIdx(allRows)
+  if (headerIdx === -1) {
+    throw new Error('Cabeçalho do extrato de cartão não identificado (procure por coluna "Bandeira" + "Valor bruto/líquido")')
+  }
+
+  const preambulo = allRows.slice(0, headerIdx).flat().join(' ')
+  const adquirente = detectAdquirente([originalName, sheet.name, preambulo].join(' '))
+  const headers = allRows[headerIdx]
+  const rows = allRows.slice(headerIdx + 1).filter(r => r.some(c => c.length > 0))
+
+  return { cnpj_detectado, transacoes: parseRows(headers, rows, adquirente) }
 }
 
 /** Entrada unificada — decide CSV/XLSX pela extensão do arquivo. */
 export async function parseCartao(
   filePath: string,
   originalName: string,
-): Promise<TransacaoCartaoParseada[]> {
+): Promise<CartaoParseResult> {
   const { promises: fsp } = await import('fs')
   const ext = originalName.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? ''
 
   if (ext === 'xlsx' || ext === 'xls') {
     const buffer = await fsp.readFile(filePath)
-    return parseCartaoXLSX(buffer)
+    return parseCartaoXLSX(buffer, originalName)
   }
 
   const content = await fsp.readFile(filePath, 'latin1')
-  return parseCartaoCSV(content)
+  return parseCartaoCSV(content, originalName)
 }

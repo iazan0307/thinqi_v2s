@@ -17,6 +17,15 @@ dist
 dist-ssr
 *.local
 
+# Uploads locais (arquivos de clientes — nunca commitar)
+server/uploads/
+
+# Scripts de debug temporários
+server/scripts/debug-*.ts
+
+# Screenshots/imagens soltas na raiz
+/image.png
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -14,6 +14,7 @@ import { portalRoutes } from './routes/portal'
 import { adminClientesRoutes } from './routes/adminClientes'
 import { usuariosRoutes } from './routes/usuarios'
 import { estimativaImpostoRoutes } from './routes/estimativaImposto'
+import { contrachequeRoutes } from './routes/contracheque'
 import { errorHandler } from './middleware/errorHandler'
 import { notFound } from './middleware/notFound'
 
@@ -65,6 +66,7 @@ app.use('/api/portal', portalRoutes)
 app.use('/api/admin/usuarios', usuariosRoutes)
 app.use('/api/admin', adminClientesRoutes)
 app.use('/api/estimativa-imposto', estimativaImpostoRoutes)
+app.use('/api/contracheque', contrachequeRoutes)
 
 // ─── Error handling ───────────────────────────────────────────────────────────
 

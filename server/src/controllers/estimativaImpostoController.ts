@@ -8,10 +8,66 @@
  */
 
 import { Request, Response, NextFunction } from 'express'
+import pdfParse from 'pdf-parse'
 import { prisma } from '../utils/prisma'
 import { AppError } from '../middleware/errorHandler'
 import { Role } from '@prisma/client'
 import { uploadPDF, downloadPDF, deletePDF } from '../utils/storage'
+
+function normalizeCnpj(cnpj: string): string {
+  return cnpj.replace(/\D/g, '')
+}
+
+/**
+ * Extrai CNPJ e mês de referência (YYYY-MM) do texto do PDF.
+ * CNPJ: aceita "12.345.678/0001-99" ou 14 dígitos consecutivos.
+ * Mês: prioriza a 1ª ocorrência "MM/YYYY" que aparece após o CNPJ — o layout
+ *      das estimativas coloca a competência imediatamente após o CNPJ, e a
+ *      data de apuração ("09/04/2026") aparece antes como DD/MM/YYYY.
+ *      Se não achar após o CNPJ, faz fallback pelo padrão "Competência: MM/YYYY"
+ *      ou pela 1ª MM/YYYY isolada (sem DD/ antes) do documento.
+ */
+function mmYYYYtoDate(mm: string, yy: string): Date {
+  return new Date(Date.UTC(parseInt(yy, 10), parseInt(mm, 10) - 1, 1))
+}
+
+async function extrairCnpjEMes(
+  buffer: Buffer,
+): Promise<{ cnpj: string | null; mesRef: Date | null }> {
+  const data = await pdfParse(buffer)
+  const text = data.text ?? ''
+
+  const reCnpjFull = /\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|(?<!\d)\d{14}(?!\d)/
+  const matchCnpj = text.match(reCnpjFull)
+  const cnpj = matchCnpj ? normalizeCnpj(matchCnpj[0]) : null
+
+  // "MM/YYYY" isolada (não precedida de "DD/") — evita pegar fragmento de DD/MM/YYYY
+  const reMesIsolada = /(?<!\d\/)(?<!\d)(0[1-9]|1[0-2])\/(\d{4})(?!\/)(?!\d)/g
+
+  let mesRef: Date | null = null
+
+  // Prioridade 1: primeira MM/YYYY após o CNPJ (layout padrão das estimativas)
+  if (matchCnpj && matchCnpj.index !== undefined) {
+    const depois = text.slice(matchCnpj.index + matchCnpj[0].length)
+    const m = reMesIsolada.exec(depois)
+    if (m) mesRef = mmYYYYtoDate(m[1], m[2])
+  }
+
+  // Prioridade 2: marcador explícito "Competência"/"Referência" seguido de MM/YYYY
+  if (!mesRef) {
+    const m = text.match(/(?:compet[êe]ncia|refer[êe]ncia|m[êe]s\s*ref)[^\d]{0,30}(0[1-9]|1[0-2])\/(\d{4})/i)
+    if (m) mesRef = mmYYYYtoDate(m[1], m[2])
+  }
+
+  // Prioridade 3: primeira MM/YYYY isolada do documento
+  if (!mesRef) {
+    reMesIsolada.lastIndex = 0
+    const m = reMesIsolada.exec(text)
+    if (m) mesRef = mmYYYYtoDate(m[1], m[2])
+  }
+
+  return { cnpj, mesRef }
+}
 
 function parseMesRef(mes: string): Date {
   const [year, month] = mes.split('-').map(Number)
@@ -79,6 +135,142 @@ export async function uploadEstimativa(
       mes_ref: mes_ref,
       nome_original: file.originalname,
       tamanho_bytes: file.size,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * Persiste 1 PDF de estimativa: resolve empresa+mês (hints ou auto-detectado),
+ * substitui PDF anterior do mesmo (empresa, mês), faz upload ao Storage.
+ */
+async function persistirEstimativa(params: {
+  file: Express.Multer.File
+  empresa_id_hint?: string
+  mes_ref_hint?: string
+  uploaded_by: string
+}): Promise<{
+  id: string
+  empresa_id: string
+  empresa_razao: string
+  mes_ref: string
+  nome_original: string
+  tamanho_bytes: number
+}> {
+  const { file, empresa_id_hint, mes_ref_hint, uploaded_by } = params
+  if (!file.buffer) throw new AppError(500, 'Upload precisa estar em memória (memoryStorage)')
+
+  let empresa_id = empresa_id_hint
+  let mesRef: Date | null = mes_ref_hint ? parseMesRef(mes_ref_hint) : null
+
+  // Auto-detecção por PDF quando hints ausentes
+  if (!empresa_id || !mesRef) {
+    const { cnpj, mesRef: mesDetectado } = await extrairCnpjEMes(file.buffer)
+    if (!empresa_id) {
+      if (!cnpj) throw new AppError(422, 'Não foi possível identificar o CNPJ no PDF — selecione uma empresa.')
+      const empresa = await prisma.empresa.findUnique({ where: { cnpj } })
+      if (!empresa) {
+        throw new AppError(
+          404,
+          `CNPJ ${cnpj} do PDF não está cadastrado — cadastre a empresa antes de subir o arquivo.`,
+        )
+      }
+      empresa_id = empresa.id
+    }
+    if (!mesRef) {
+      if (!mesDetectado) throw new AppError(422, 'Não foi possível identificar o mês de referência no PDF.')
+      mesRef = mesDetectado
+    }
+  }
+
+  const empresa = await prisma.empresa.findUnique({ where: { id: empresa_id } })
+  if (!empresa) throw new AppError(404, 'Empresa não encontrada')
+
+  const key = buildStorageKey(empresa_id, mesRef)
+
+  const existente = await prisma.estimativaImpostoPDF.findUnique({
+    where: { empresa_id_mes_ref: { empresa_id, mes_ref: mesRef } },
+  })
+  if (existente) {
+    await deletePDF(existente.pdf_path)
+    await prisma.estimativaImpostoPDF.delete({ where: { id: existente.id } })
+  }
+
+  await uploadPDF(key, file.buffer)
+
+  const estimativa = await prisma.estimativaImpostoPDF.create({
+    data: {
+      empresa_id,
+      mes_ref: mesRef,
+      pdf_path: key,
+      nome_original: file.originalname,
+      tamanho_bytes: file.size,
+      uploaded_by,
+    },
+  })
+
+  return {
+    id: estimativa.id,
+    empresa_id,
+    empresa_razao: empresa.razao_social,
+    mes_ref: mesRef.toISOString().slice(0, 7),
+    nome_original: file.originalname,
+    tamanho_bytes: file.size,
+  }
+}
+
+/** POST /api/estimativa-imposto/upload/lote — auto-roteia cada PDF via CNPJ + mês extraídos */
+export async function uploadEstimativaLote(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const files = (req.files as Express.Multer.File[] | undefined) ?? []
+    if (files.length === 0) throw new AppError(400, 'Nenhum arquivo enviado')
+
+    const { empresa_id } = req.body as { empresa_id?: string }
+
+    const resultados = await Promise.all(
+      files.map(async file => {
+        try {
+          const r = await persistirEstimativa({
+            file,
+            empresa_id_hint: empresa_id || undefined,
+            uploaded_by: req.user!.id,
+          })
+          return {
+            nome_original: file.originalname,
+            status:        'sucesso' as const,
+            id:            r.id,
+            empresa_id:    r.empresa_id,
+            empresa_razao: r.empresa_razao,
+            mes_ref:       r.mes_ref,
+            tamanho_bytes: r.tamanho_bytes,
+            erro:          null,
+          }
+        } catch (e) {
+          return {
+            nome_original: file.originalname,
+            status:        'erro' as const,
+            id:            null,
+            empresa_id:    null,
+            empresa_razao: null,
+            mes_ref:       null,
+            tamanho_bytes: file.size,
+            erro:          e instanceof Error ? e.message : 'Erro desconhecido',
+          }
+        }
+      }),
+    )
+
+    const sucesso = resultados.filter(r => r.status === 'sucesso').length
+    res.status(201).json({
+      total:      resultados.length,
+      sucesso,
+      falha:      resultados.length - sucesso,
+      resultados,
     })
   } catch (err) {
     next(err)

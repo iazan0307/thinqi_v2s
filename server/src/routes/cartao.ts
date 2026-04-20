@@ -3,7 +3,7 @@ import multer from 'multer'
 import * as path from 'path'
 import * as fs from 'fs'
 import { authenticate, requireRole } from '../middleware/auth'
-import { uploadCartao, getCartao } from '../controllers/cartaoController'
+import { uploadCartao, uploadCartaoLote, getCartao } from '../controllers/cartaoController'
 import { Role } from '@prisma/client'
 
 const router = Router()
@@ -30,6 +30,7 @@ const upload = multer({
 router.use(authenticate)
 
 router.post('/upload', requireRole(Role.ADMIN, Role.CONTADOR), upload.single('arquivo'), uploadCartao)
+router.post('/upload/lote', requireRole(Role.ADMIN, Role.CONTADOR), upload.array('arquivos', 50), uploadCartaoLote)
 router.get('/:empresaId/:mes', getCartao)
 
 export { router as cartaoRoutes }

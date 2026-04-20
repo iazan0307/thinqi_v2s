@@ -4,6 +4,8 @@
  */
 
 import { Request, Response, NextFunction } from 'express'
+import * as fs from 'fs/promises'
+import * as path from 'path'
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
 import { prisma } from '../utils/prisma'
@@ -52,6 +54,52 @@ export async function listArquivos(
     ])
 
     res.json({ data: arquivos, meta: { total, page, limit } })
+  } catch (err) {
+    next(err)
+  }
+}
+
+// ─── DELETE /api/admin/arquivos/:id ───────────────────────────────────────────
+// Remove 1 ArquivoUpload + todas as transações geradas a partir dele + arquivo físico.
+// Prisma não cascateia essas relações (nenhuma tem onDelete: Cascade), então a ordem
+// importa: filhos primeiro dentro de uma transação.
+
+export async function deleteArquivo(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = req.params
+
+    const arquivo = await prisma.arquivoUpload.findUnique({
+      where: { id },
+      select: { id: true, nome_storage: true, empresa_id: true },
+    })
+    if (!arquivo) throw new AppError(404, 'Arquivo não encontrado')
+
+    await prisma.$transaction([
+      prisma.transacaoBancaria.deleteMany({ where: { arquivo_id: id } }),
+      prisma.transacaoCartao.deleteMany({ where: { arquivo_id: id } }),
+      prisma.faturamento.deleteMany({ where: { arquivo_id: id } }),
+      prisma.arquivoUpload.delete({ where: { id } }),
+    ])
+
+    // Remove o arquivo físico (se ainda existir). Silencia ENOENT — arquivos antigos
+    // podem já ter sumido (Railway recria o disco entre deploys) e isso não é erro.
+    if (arquivo.nome_storage) {
+      const full = path.join(process.cwd(), 'uploads', arquivo.nome_storage)
+      try {
+        await fs.unlink(full)
+      } catch (e) {
+        const err = e as NodeJS.ErrnoException
+        if (err.code !== 'ENOENT') {
+          console.warn(`[ARQUIVOS] Falha ao remover ${full}: ${err.message}`)
+        }
+      }
+    }
+
+    res.json({ deletado: true, id })
   } catch (err) {
     next(err)
   }

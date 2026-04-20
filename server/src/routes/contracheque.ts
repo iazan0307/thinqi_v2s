@@ -2,18 +2,12 @@ import { Router } from 'express'
 import multer from 'multer'
 import * as path from 'path'
 import { authenticate, requireRole } from '../middleware/auth'
-import {
-  uploadEstimativa,
-  uploadEstimativaLote,
-  getEstimativa,
-  downloadEstimativa,
-  deleteEstimativa,
-} from '../controllers/estimativaImpostoController'
+import { uploadContracheque, uploadContrachequeLote } from '../controllers/contrachequeController'
 import { Role } from '@prisma/client'
 
 const router = Router()
 
-// Em memória: o PDF é enviado direto ao Supabase Storage, sem tocar disco local.
+// Em memória: o PDF é descartado após extração; CPF em claro nunca toca o disco.
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -30,16 +24,13 @@ router.post(
   '/upload',
   requireRole(Role.ADMIN, Role.CONTADOR),
   upload.single('arquivo'),
-  uploadEstimativa,
+  uploadContracheque,
 )
 router.post(
   '/upload/lote',
   requireRole(Role.ADMIN, Role.CONTADOR),
   upload.array('arquivos', 50),
-  uploadEstimativaLote,
+  uploadContrachequeLote,
 )
-router.get('/', getEstimativa)
-router.get('/:id/pdf', downloadEstimativa)
-router.delete('/:id', requireRole(Role.ADMIN, Role.CONTADOR), deleteEstimativa)
 
-export { router as estimativaImpostoRoutes }
+export { router as contrachequeRoutes }

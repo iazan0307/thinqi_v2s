@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Upload, FileSpreadsheet, CreditCard, Landmark, X, Loader2,
-  CheckCircle2, AlertCircle, FileText, Clock, XCircle, Calculator,
+  CheckCircle2, AlertCircle, FileText, Clock, XCircle, Calculator, Receipt, Trash2,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Pagination } from "@/components/Pagination";
@@ -18,6 +18,10 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -38,7 +42,7 @@ interface ArquivoStatus {
   _count?: { transacoes_bancarias: number };
 }
 
-type TipoUpload = "extrato" | "faturamento" | "cartao" | "estimativa";
+type TipoUpload = "extrato" | "faturamento" | "cartao" | "estimativa" | "contracheque";
 
 // ─── History types ────────────────────────────────────────────────────────────
 
@@ -174,6 +178,9 @@ const CentralUploads = () => {
   const [page, setPage] = useState(1);
   const LIMIT = 12;
 
+  // Confirmação de exclusão
+  const [arquivoParaExcluir, setArquivoParaExcluir] = useState<ArquivoHistorico | null>(null);
+
   const { data: empresasData } = useQuery<EmpresasResponse>({
     queryKey: ["empresas"],
     queryFn: () => api.get<EmpresasResponse>("/empresas?limit=100"),
@@ -295,6 +302,47 @@ const CentralUploads = () => {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  interface FaturamentoLoteResumo {
+    empresa_razao: string;
+    cnpj_emitente: string;
+    mes_ref: string;
+    qtd_notas: number;
+  }
+  interface FaturamentoLoteResultado {
+    nome_original: string;
+    status: "sucesso" | "erro";
+    meses_importados: number;
+    resultados: FaturamentoLoteResumo[];
+    erro: string | null;
+  }
+  interface FaturamentoLoteResponse {
+    total: number;
+    sucesso: number;
+    falha: number;
+    resultados: FaturamentoLoteResultado[];
+  }
+
+  const uploadFaturamentoLote = useMutation({
+    mutationFn: async (files: File[]) => {
+      if (files.length === 0) return;
+      const fd = new FormData();
+      for (const f of files) fd.append("arquivos", f);
+      return api.upload<FaturamentoLoteResponse>("/faturamento/upload/lote", fd);
+    },
+    onSuccess: (result) => {
+      if (!result) return;
+      const sucessos = result.resultados.filter(r => r.status === "sucesso");
+      const erros = result.resultados.filter(r => r.status === "erro");
+      sucessos.forEach(r => {
+        const resumo = r.resultados.map(x => `${x.empresa_razao} (${x.mes_ref})`).join(", ");
+        toast.success(`${r.nome_original}: ${r.meses_importados} mês(es) → ${resumo}`);
+      });
+      erros.forEach(r => toast.error(`${r.nome_original}: ${r.erro}`));
+      qc.invalidateQueries({ queryKey: ["admin-arquivos"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   const uploadEstimativa = useMutation({
     mutationFn: async ({ file, mes }: { file: File; mes: string }) => {
       if (!empresaId) { toast.error("Selecione uma empresa primeiro"); return; }
@@ -311,17 +359,111 @@ const CentralUploads = () => {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const uploadCartao = useMutation({
-    mutationFn: async (file: File) => {
-      if (!empresaId) { toast.error("Selecione uma empresa primeiro"); return; }
+  interface EstimativaLoteResultado {
+    nome_original: string;
+    status: "sucesso" | "erro";
+    empresa_razao: string | null;
+    mes_ref: string | null;
+    erro: string | null;
+  }
+  interface EstimativaLoteResponse {
+    total: number;
+    sucesso: number;
+    falha: number;
+    resultados: EstimativaLoteResultado[];
+  }
+
+  interface ContrachequeLoteResultado {
+    nome_original: string;
+    status: "sucesso" | "erro";
+    empresa_razao: string | null;
+    socio_nome: string | null;
+    cpf_mascara: string | null;
+    valor_prolabore_mensal: number;
+    mes_ref: string | null;
+    erro: string | null;
+  }
+  interface ContrachequeLoteResponse {
+    total: number;
+    sucesso: number;
+    falha: number;
+    resultados: ContrachequeLoteResultado[];
+  }
+
+  const uploadContracheque = useMutation({
+    mutationFn: async (files: File[]) => {
+      if (files.length === 0) return;
       const fd = new FormData();
-      fd.append("arquivo", file);
-      fd.append("empresa_id", empresaId);
-      return api.upload<{ adquirente: string; transacoes_importadas: number }>("/cartao/upload", fd);
+      for (const f of files) fd.append("arquivos", f);
+      return api.upload<ContrachequeLoteResponse>("/contracheque/upload/lote", fd);
     },
     onSuccess: (result) => {
       if (!result) return;
-      toast.success(`${result.adquirente}: ${result.transacoes_importadas} transações importadas`);
+      const sucessos = result.resultados.filter(r => r.status === "sucesso");
+      const erros = result.resultados.filter(r => r.status === "erro");
+      sucessos.forEach(r =>
+        toast.success(
+          `${r.nome_original}: ${r.socio_nome} (${r.cpf_mascara}) · R$ ${r.valor_prolabore_mensal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} → ${r.empresa_razao}`,
+        ),
+      );
+      erros.forEach(r => toast.error(`${r.nome_original}: ${r.erro}`));
+      qc.invalidateQueries({ queryKey: ["socios"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const uploadEstimativaLote = useMutation({
+    mutationFn: async (files: File[]) => {
+      if (files.length === 0) return;
+      const fd = new FormData();
+      for (const f of files) fd.append("arquivos", f);
+      if (empresaId) fd.append("empresa_id", empresaId);
+      return api.upload<EstimativaLoteResponse>("/estimativa-imposto/upload/lote", fd);
+    },
+    onSuccess: (result) => {
+      if (!result) return;
+      const sucessos = result.resultados.filter(r => r.status === "sucesso");
+      const erros = result.resultados.filter(r => r.status === "erro");
+      sucessos.forEach(r =>
+        toast.success(`${r.nome_original}: ${r.mes_ref} → ${r.empresa_razao}`),
+      );
+      erros.forEach(r => toast.error(`${r.nome_original}: ${r.erro}`));
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  interface CartaoLoteResultado {
+    nome_original: string;
+    status: "sucesso" | "erro";
+    empresa_razao: string | null;
+    adquirente: string | null;
+    transacoes_importadas: number;
+    erro: string | null;
+  }
+  interface CartaoLoteResponse {
+    total: number;
+    sucesso: number;
+    falha: number;
+    resultados: CartaoLoteResultado[];
+  }
+
+  const uploadCartao = useMutation({
+    mutationFn: async (files: File[]) => {
+      if (files.length === 0) return;
+      const fd = new FormData();
+      for (const f of files) fd.append("arquivos", f);
+      // empresa_id é opcional — backend roteia por CNPJ do arquivo quando ausente
+      if (empresaId) fd.append("empresa_id", empresaId);
+      return api.upload<CartaoLoteResponse>("/cartao/upload/lote", fd);
+    },
+    onSuccess: (result) => {
+      if (!result) return;
+      const sucessos = result.resultados.filter(r => r.status === "sucesso");
+      const erros = result.resultados.filter(r => r.status === "erro");
+      sucessos.forEach(r =>
+        toast.success(`${r.nome_original}: ${r.adquirente} · ${r.transacoes_importadas} transações → ${r.empresa_razao}`),
+      );
+      erros.forEach(r => toast.error(`${r.nome_original}: ${r.erro}`));
       qc.invalidateQueries({ queryKey: ["admin-arquivos"] });
     },
     onError: (err: Error) => toast.error(err.message),
@@ -338,22 +480,53 @@ const CentralUploads = () => {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const excluirArquivo = useMutation({
+    mutationFn: (id: string) => api.delete<{ deletado: boolean; id: string }>(`/admin/arquivos/${id}`),
+    onSuccess: (result) => {
+      setFila(prev => prev.filter(a => a.id !== result.id));
+      qc.invalidateQueries({ queryKey: ["admin-arquivos"] });
+      qc.invalidateQueries({ queryKey: ["retiradas"] });
+      toast.success("Arquivo excluído e transações removidas.");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   const handleFiles = (files: File[], tipo: TipoUpload) => {
-    if (!empresaId) { toast.error("Selecione uma empresa primeiro"); return; }
     if (files.length === 0) return;
 
+    // Cartão, faturamento e estimativa: empresa é opcional (detectada automaticamente)
+    // Extrato OFX: exige seleção manual
+    if (tipo === "extrato" && !empresaId) {
+      toast.error("Selecione uma empresa primeiro");
+      return;
+    }
+
+    if (tipo === "cartao") {
+      uploadCartao.mutate(files);
+      return;
+    }
+
+    if (tipo === "contracheque") {
+      uploadContracheque.mutate(files);
+      return;
+    }
+
     if (tipo === "faturamento") {
-      if (files.length > 1) {
-        toast.info("Faturamento requer mês de referência — envie um arquivo por vez.");
+      // Com múltiplos arquivos OU quando não há empresa selecionada: usa lote com auto-detecção
+      if (files.length > 1 || !empresaId) {
+        uploadFaturamentoLote.mutate(files);
+        return;
       }
+      // Arquivo único + empresa selecionada: pergunta mês (mantém fluxo legado)
       setPendingFatFile(files[0]);
       setShowFatModal(true);
       return;
     }
 
     if (tipo === "estimativa") {
-      if (files.length > 1) {
-        toast.info("Estimativa de impostos requer mês de referência — envie um arquivo por vez.");
+      if (files.length > 1 || !empresaId) {
+        uploadEstimativaLote.mutate(files);
+        return;
       }
       setPendingEstFile(files[0]);
       setShowEstModal(true);
@@ -365,12 +538,8 @@ const CentralUploads = () => {
       return;
     }
 
-    if (files.length > 1) {
-      toast.success(`Enviando ${files.length} arquivos em lote…`);
-    }
     for (const file of files) {
       if (tipo === "extrato") uploadExtrato.mutate(file);
-      else if (tipo === "cartao") uploadCartao.mutate(file);
     }
   };
 
@@ -423,12 +592,14 @@ const CentralUploads = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <DropZone title="Extratos Bancários" icon={Landmark} accept=".ofx,.csv" multiple
               description="OFX ou CSV do banco" tipo="extrato" onFiles={handleFiles} />
-            <DropZone title="Faturamento / Robô IAZAN" icon={FileSpreadsheet} accept=".xlsx,.csv"
-              description="Notas fiscais e dados do ERP" tipo="faturamento" onFiles={handleFiles} />
+            <DropZone title="Faturamento / Robô IAZAN" icon={FileSpreadsheet} accept=".xlsx,.csv" multiple
+              description="Notas IAZAN — empresa e mês detectados automaticamente" tipo="faturamento" onFiles={handleFiles} />
             <DropZone title="Operadoras de Cartão" icon={CreditCard} accept=".csv,.xlsx" multiple
-              description="Stone, Cielo, Rede, PagSeguro…" tipo="cartao" onFiles={handleFiles} />
-            <DropZone title="Estimativa de Impostos" icon={Calculator} accept=".pdf"
-              description="PDF mensal disponibilizado ao cliente" tipo="estimativa" onFiles={handleFiles} />
+              description="Stone, Cielo, Rede… empresa detectada pelo CNPJ" tipo="cartao" onFiles={handleFiles} />
+            <DropZone title="Estimativa de Impostos" icon={Calculator} accept=".pdf" multiple
+              description="PDFs mensais — empresa e mês extraídos do arquivo" tipo="estimativa" onFiles={handleFiles} />
+            <DropZone title="Contracheque Pró-labore" icon={Receipt} accept=".pdf" multiple
+              description="PDF de pró-labore — sócio identificado por CPF" tipo="contracheque" onFiles={handleFiles} />
           </div>
         </CardContent>
       </Card>
@@ -560,6 +731,7 @@ const CentralUploads = () => {
                         <TableHead className="text-right">Tamanho</TableHead>
                         <TableHead className="text-right">Enviado em</TableHead>
                         <TableHead>Por</TableHead>
+                        <TableHead className="w-[50px]"></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -585,6 +757,17 @@ const CentralUploads = () => {
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {a.uploader?.nome ?? "—"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              onClick={() => setArquivoParaExcluir(a)}
+                              title="Excluir arquivo e transações"
+                            >
+                              <Trash2 size={14} />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -633,6 +816,33 @@ const CentralUploads = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Confirmação de exclusão ── */}
+      <AlertDialog open={!!arquivoParaExcluir} onOpenChange={open => !open && setArquivoParaExcluir(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir arquivo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O arquivo <strong>{arquivoParaExcluir?.nome_original}</strong> e todas as transações
+              geradas a partir dele serão removidos permanentemente. Essa ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (arquivoParaExcluir) {
+                  excluirArquivo.mutate(arquivoParaExcluir.id);
+                  setArquivoParaExcluir(null);
+                }
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ── Modal mês de referência (faturamento) ── */}
       <Dialog open={showFatModal} onOpenChange={setShowFatModal}>

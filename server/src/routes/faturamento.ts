@@ -3,7 +3,7 @@ import multer from 'multer'
 import * as path from 'path'
 import * as fs from 'fs'
 import { authenticate, requireRole } from '../middleware/auth'
-import { uploadFaturamento, getFaturamento } from '../controllers/faturamentoController'
+import { uploadFaturamento, uploadFaturamentoLote, getFaturamento } from '../controllers/faturamentoController'
 import { Role } from '@prisma/client'
 
 const router = Router()
@@ -31,6 +31,7 @@ const upload = multer({
 router.use(authenticate)
 
 router.post('/upload', requireRole(Role.ADMIN, Role.CONTADOR), upload.single('arquivo'), uploadFaturamento)
+router.post('/upload/lote', requireRole(Role.ADMIN, Role.CONTADOR), upload.array('arquivos', 50), uploadFaturamentoLote)
 router.get('/:empresaId/:mes', getFaturamento)
 
 export { router as faturamentoRoutes }

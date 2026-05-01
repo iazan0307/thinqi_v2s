@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, ChevronDown, ChevronRight, UserPlus, Loader2, Pencil, Trash2, UserX, CheckCircle2, Mail, Eye } from "lucide-react";
+import { Plus, ChevronDown, ChevronRight, UserPlus, Loader2, Pencil, Trash2, UserX, CheckCircle2, Mail, Eye, Boxes } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useViewAs } from "@/contexts/ViewAsContext";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -59,6 +60,93 @@ const fmtCnpj = (c: string) => {
     ? `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12)}`
     : c;
 };
+
+// ─── Subcomponente módulos ─────────────────────────────────────────────────────
+
+interface ModuloEmpresa {
+  id: string;
+  codigo: string;
+  nome: string;
+  descricao: string | null;
+  habilitado: boolean;
+  observacao: string | null;
+}
+
+interface ModulosEmpresaResponse { data: ModuloEmpresa[] }
+
+function EmpresaModulos({ empresaId }: { empresaId: string }) {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery<ModulosEmpresaResponse>({
+    queryKey: ["empresa-modulos", empresaId],
+    queryFn: () => api.get<ModulosEmpresaResponse>(`/admin/empresas/${empresaId}/modulos`),
+  });
+
+  const toggle = useMutation({
+    mutationFn: ({ moduloId, habilitado }: { moduloId: string; habilitado: boolean }) =>
+      api.put(`/admin/empresas/${empresaId}/modulos/${moduloId}`, { habilitado }),
+    onMutate: async ({ moduloId, habilitado }) => {
+      await qc.cancelQueries({ queryKey: ["empresa-modulos", empresaId] });
+      const previous = qc.getQueryData<ModulosEmpresaResponse>(["empresa-modulos", empresaId]);
+      if (previous) {
+        qc.setQueryData<ModulosEmpresaResponse>(["empresa-modulos", empresaId], {
+          data: previous.data.map(m => m.id === moduloId ? { ...m, habilitado } : m),
+        });
+      }
+      return { previous };
+    },
+    onError: (err: Error, _vars, ctx) => {
+      if (ctx?.previous) qc.setQueryData(["empresa-modulos", empresaId], ctx.previous);
+      toast.error(err.message);
+    },
+    onSuccess: (_data, vars) => {
+      const m = data?.data.find(x => x.id === vars.moduloId);
+      toast.success(`${m?.nome ?? "Módulo"} ${vars.habilitado ? "habilitado" : "desabilitado"}.`);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["empresa-modulos", empresaId] }),
+  });
+
+  const modulos = data?.data ?? [];
+
+  return (
+    <div className="border-t border-border">
+      <div className="p-4 pb-2 flex items-center gap-2">
+        <Boxes size={14} className="text-muted-foreground" />
+        <p className="text-sm font-medium text-muted-foreground">Módulos Habilitados</p>
+      </div>
+      <div className="px-4 pb-4">
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm py-2">
+            <Loader2 size={14} className="animate-spin" /> Carregando módulos...
+          </div>
+        ) : modulos.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">Nenhum módulo disponível no catálogo.</p>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {modulos.map(m => (
+              <div
+                key={m.id}
+                className="flex items-start justify-between gap-3 rounded-lg border border-border bg-muted/20 px-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium leading-tight">{m.nome}</p>
+                  {m.descricao && (
+                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{m.descricao}</p>
+                  )}
+                  <code className="text-[10px] text-muted-foreground/70 font-mono">{m.codigo}</code>
+                </div>
+                <Switch
+                  checked={m.habilitado}
+                  disabled={toggle.isPending}
+                  onCheckedChange={v => toggle.mutate({ moduloId: m.id, habilitado: v })}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ─── Subcomponente sócios ──────────────────────────────────────────────────────
 
@@ -479,18 +567,21 @@ const EmpresasSocios = () => {
               </button>
 
               {isOpen && (
-                <EmpresaSocios
-                  empresaId={empresa.id}
-                  semCliente={qtdClientes === 0}
-                  onAddSocio={() => openAddSocio(empresa.id)}
-                  onEditSocio={openEditSocio}
-                  onDeleteSocio={(s) => setDeleteSocioTarget({ ...s, empresaId: empresa.id })}
-                  onConvidarCliente={() => {
-                    setNovaEmpresa({ id: empresa.id, razao_social: empresa.razao_social });
-                    setEmpresaModalStep("sucesso");
-                    setShowEmpresaModal(true);
-                  }}
-                />
+                <>
+                  <EmpresaSocios
+                    empresaId={empresa.id}
+                    semCliente={qtdClientes === 0}
+                    onAddSocio={() => openAddSocio(empresa.id)}
+                    onEditSocio={openEditSocio}
+                    onDeleteSocio={(s) => setDeleteSocioTarget({ ...s, empresaId: empresa.id })}
+                    onConvidarCliente={() => {
+                      setNovaEmpresa({ id: empresa.id, razao_social: empresa.razao_social });
+                      setEmpresaModalStep("sucesso");
+                      setShowEmpresaModal(true);
+                    }}
+                  />
+                  <EmpresaModulos empresaId={empresa.id} />
+                </>
               )}
             </Card>
           );

@@ -76,23 +76,38 @@ const Dashboard = () => {
     ? `${params}&mes_ref=${mes}`
     : `?mes_ref=${mes}`;
 
-  const { data: estimativa } = useQuery<{ id: string; nome_original: string; tamanho_bytes: number }>({
+  const { data: estimativa } = useQuery<{ id: string; nome_original: string; tamanho_bytes: number; valor_total: number }>({
     queryKey: ["portal-estimativa", user?.empresa_id, mes],
     queryFn: () => api.get(`/estimativa-imposto${estimativaQueryString}`),
     enabled: !!user && !!mes,
     retry: false,
   });
 
-  const baixarEstimativa = async () => {
-    if (!estimativa) return;
+  // Histórico de todas as versões de estimativas (todos os meses + todas as versões
+  // por mês). Usado para o cliente revisitar PDFs antigos.
+  const { data: historicoEstimativas } = useQuery<{
+    data: { id: string; mes_ref: string; nome_original: string; tamanho_bytes: number; uploaded_at: string; valor_total: number }[]
+  }>({
+    queryKey: ["portal-estimativa-historico", user?.empresa_id],
+    queryFn: () => api.get(`/estimativa-imposto/historico${params}`),
+    enabled: !!user,
+    retry: false,
+  });
+
+  const baixarEstimativaPorId = async (id: string) => {
     try {
-      const blob = await api.downloadBlob(`/estimativa-imposto/${estimativa.id}/pdf`);
+      const blob = await api.downloadBlob(`/estimativa-imposto/${id}/pdf`);
       const url = URL.createObjectURL(blob);
       window.open(url, "_blank");
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch {
-      /* silencioso — link de download já exibe erro 404 via ausência do bloco */
+      /* silencioso */
     }
+  };
+
+  const baixarEstimativa = async () => {
+    if (!estimativa) return;
+    await baixarEstimativaPorId(estimativa.id);
   };
 
   // Perfil ADMINISTRATIVO: oculta informações de retiradas/distribuição de sócios.
@@ -218,6 +233,7 @@ const Dashboard = () => {
               <p className="text-sm font-medium">Estimativa de Impostos — {mes}</p>
               <p className="text-xs text-muted-foreground">
                 {estimativa.nome_original} · PDF disponibilizado pelo contador
+                {estimativa.valor_total > 0 && ` · Total: ${fmtBRL(estimativa.valor_total)}`}
               </p>
             </div>
           </div>
@@ -227,6 +243,49 @@ const Dashboard = () => {
           >
             <Download size={14} /> Baixar PDF
           </button>
+        </div>
+      )}
+
+      {/* Histórico de estimativas (todos os meses + todas as versões) */}
+      {historicoEstimativas && historicoEstimativas.data.length > 0 && (
+        <div className="bg-card rounded-xl border border-border p-6 shadow-sm animate-reveal">
+          <h2 className="text-base font-semibold mb-3">Histórico de Estimativas</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-muted-foreground border-b border-border">
+                <tr>
+                  <th className="text-left py-2 pr-3 font-medium">Mês</th>
+                  <th className="text-left py-2 pr-3 font-medium">Arquivo</th>
+                  <th className="text-right py-2 pr-3 font-medium">Total</th>
+                  <th className="text-left py-2 pr-3 font-medium">Enviado em</th>
+                  <th className="py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {historicoEstimativas.data.map(item => (
+                  <tr key={item.id} className="border-b border-border/40 last:border-0">
+                    <td className="py-2 pr-3">{item.mes_ref.slice(0, 7)}</td>
+                    <td className="py-2 pr-3 truncate max-w-xs">{item.nome_original}</td>
+                    <td className="py-2 pr-3 text-right">
+                      {item.valor_total > 0 ? fmtBRL(item.valor_total) : "—"}
+                    </td>
+                    <td className="py-2 pr-3 text-muted-foreground">
+                      {new Date(item.uploaded_at).toLocaleDateString("pt-BR")}
+                    </td>
+                    <td className="py-2 text-right">
+                      <button
+                        onClick={() => baixarEstimativaPorId(item.id)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-muted"
+                        title="Baixar PDF"
+                      >
+                        <Download size={12} /> Baixar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

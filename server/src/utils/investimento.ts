@@ -11,20 +11,77 @@
  * Caixa, Inter) — mantenha sincronizado com o portalController.
  */
 
-const INVESTIMENTO_PATTERNS: RegExp[] = [
-  /aplic\s*aut/i,           // Itaú: "APLIC AUT MAIS"
-  /res\s*aplic\s*aut/i,     // Itaú: "RES APLIC AUT MAIS"
-  /resg\s*aplic\s*aut/i,    // Variante: "RESG APLIC AUT"
-  /rendimentos\s*rend\s*pago/i, // Itaú: "RENDIMENTOS REND PAGO"
-  /apl\s*aplic/i,           // Bradesco: "APL APLICACAO"
-  /resgate\s*de?\s*aplic/i, // Genérico: "RESGATE DE APLICACAO", "RESGATE APLICACAO"
-  /aplicacao\s*autom/i,     // Genérico: "APLICACAO AUTOMATICA"
-  /invest\s*autom/i,        // Variante: "INVEST AUTOMATICO"
-  /cdb\s*autom/i,           // Inter/Santander: "CDB AUTOMATICO"
-  /rdb\s*autom/i,           // Variante: "RDB AUTOMATICO"
+const RENDIMENTO_PATTERNS: RegExp[] = [
+  /rendimentos?\s*rend\s*pago/i,
+  /rendimento.*aplic/i,
+  /\brend\s*pago/i,
+  /\brendimento\b/i,
 ]
+
+const RESGATE_PATTERNS: RegExp[] = [
+  /res\s*aplic\s*aut/i,
+  /resg\s*aplic\s*aut/i,
+  /resgate\s*de?\s*aplic/i,
+]
+
+const APLICACAO_PATTERNS: RegExp[] = [
+  /aplic\s*aut/i,
+  /apl\s*aplic/i,
+  /aplicacao\s*autom/i,
+  /invest\s*autom/i,
+  /cdb\s*autom/i,
+  /rdb\s*autom/i,
+]
+
+export function isRendimentoAplicacao(descricao: string | null | undefined): boolean {
+  if (!descricao) return false
+  return RENDIMENTO_PATTERNS.some(p => p.test(descricao))
+}
+
+export function isResgateAplicacao(descricao: string | null | undefined): boolean {
+  if (!descricao) return false
+  return RESGATE_PATTERNS.some(p => p.test(descricao))
+}
+
+export function isAplicacaoSaida(descricao: string | null | undefined): boolean {
+  if (!descricao) return false
+  return APLICACAO_PATTERNS.some(p => p.test(descricao))
+}
 
 export function isInvestimentoAutomatico(descricao: string | null | undefined): boolean {
   if (!descricao) return false
-  return INVESTIMENTO_PATTERNS.some(p => p.test(descricao))
+  return (
+    isRendimentoAplicacao(descricao) ||
+    isResgateAplicacao(descricao) ||
+    isAplicacaoSaida(descricao)
+  )
+}
+
+/**
+ * Detecta entradas no banco que são repasses de adquirentes de cartão
+ * (Cielo, Stone, Rede, PagSeguro, etc.). Essas entradas devem sair do
+ * cálculo de receita real porque já estão contabilizadas em
+ * TransacaoCartao.valor_bruto (vendas brutas no maquininha).
+ */
+const RECEBIMENTO_CARTAO_PATTERNS: RegExp[] = [
+  /\bcielo\b/i,
+  /\bstone\b/i,
+  /\brede(?:card)?\b/i,
+  /\bpagseguro\b/i,
+  /\bgetnet\b/i,
+  /\bsafrapay\b/i,
+  /\bbin\b/i,
+  /\badyen\b/i,
+  /\bvero\b/i,
+  /\bsicredi\s*pay\b/i,
+  /\bmaquininha\b/i,
+  /repasse.*cart/i,
+  /liquid.*cart/i,
+  /credenciador/i,
+  /adquirente/i,
+]
+
+export function isRecebimentoCartao(descricao: string | null | undefined): boolean {
+  if (!descricao) return false
+  return RECEBIMENTO_CARTAO_PATTERNS.some(p => p.test(descricao))
 }

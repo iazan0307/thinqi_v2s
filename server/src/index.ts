@@ -15,6 +15,7 @@ import { adminClientesRoutes } from './routes/adminClientes'
 import { usuariosRoutes } from './routes/usuarios'
 import { estimativaImpostoRoutes } from './routes/estimativaImposto'
 import { contrachequeRoutes } from './routes/contracheque'
+import { modulosRoutes } from './routes/modulos'
 import { errorHandler } from './middleware/errorHandler'
 import { notFound } from './middleware/notFound'
 
@@ -64,6 +65,7 @@ app.use('/api/portal', portalRoutes)
 // e o middleware de autenticação do mount /api/admin (adminClientesRoutes)
 // consome requests a /api/admin/usuarios/* antes deles caírem pro router certo.
 app.use('/api/admin/usuarios', usuariosRoutes)
+app.use('/api/admin', modulosRoutes)
 app.use('/api/admin', adminClientesRoutes)
 app.use('/api/estimativa-imposto', estimativaImpostoRoutes)
 app.use('/api/contracheque', contrachequeRoutes)

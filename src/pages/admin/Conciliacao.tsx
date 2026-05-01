@@ -17,12 +17,19 @@ interface EmpresasResponse { data: Empresa[] }
 interface ResultadoConciliacao {
   empresa_id: string;
   mes_ref: string;
+  total_faturado: number;
+  total_entradas_banco: number;
+  total_aporte_socios: number;
+  total_recebimentos_cartao: number;
+  total_rendimento_aplicacao: number;
+  total_resgate_aplicacao: number;
+  total_vendas_cartao: number;
+  total_entradas_real: number;
+  // Aliases legados
   total_banco: number;
   total_socios_banco: number;
-  total_entradas_banco: number;
   total_cartao: number;
   total_entradas: number;
-  total_faturado: number;
   diferenca: number;
   percentual_inconsistencia: number;
   status: "OK" | "AVISO" | "ALERTA";
@@ -186,21 +193,28 @@ const Conciliacao = () => {
             </div>
           </div>
 
-          {/* Tabela de valores */}
+          {/* Tabela de valores — ordem: faturamento primeiro (referência), depois entradas */}
           <Card className="shadow-sm">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Demonstrativo Detalhado</CardTitle>
             </CardHeader>
             <CardContent className="space-y-1 pt-0">
-              <LinhaValor label="Entradas bancárias brutas" value={fmtBRL(resultado.total_banco)} />
-              <LinhaValor label="(−) Aportes de sócios identificados" value={fmtBRL(resultado.total_socios_banco)} negativo />
-              <LinhaValor label="Entradas bancárias válidas" value={fmtBRL(resultado.total_entradas_banco)} />
-              <LinhaValor label="(+) Liquidações de cartão" value={fmtBRL(resultado.total_cartao)} />
-              <LinhaValor label="TOTAL DE ENTRADAS REAIS" value={fmtBRL(resultado.total_entradas)} destaque />
-              <LinhaValor label="(−) Faturamento declarado (NFs)" value={fmtBRL(resultado.total_faturado)} />
+              <LinhaValor label="Faturamento declarado (NFs)" value={fmtBRL(resultado.total_faturado)} destaque />
+              <div className="pt-2 mt-2 border-t border-border" />
+              <LinhaValor label="Entradas Banco" value={fmtBRL(resultado.total_entradas_banco)} />
+              <LinhaValor label="(−) Aporte Sócios" value={fmtBRL(resultado.total_aporte_socios)} negativo />
+              <LinhaValor label="(−) Recebimentos CC/CD" value={fmtBRL(resultado.total_recebimentos_cartao)} negativo />
+              <LinhaValor label="(−) Rendimento Aplicação" value={fmtBRL(resultado.total_rendimento_aplicacao)} negativo />
+              <LinhaValor label="(−) Resgate Aplicação" value={fmtBRL(resultado.total_resgate_aplicacao)} negativo />
+              <LinhaValor label="(+) Vendas CC/CD" value={fmtBRL(resultado.total_vendas_cartao)} />
+              <LinhaValor label="ENTRADAS REAIS" value={fmtBRL(resultado.total_entradas_real)} destaque />
               <div className="pt-2 mt-2 border-t border-border">
                 <LinhaValor
-                  label="DIFERENÇA NÃO FATURADA"
+                  label={
+                    resultado.diferenca > 0
+                      ? "DIFERENÇA NÃO FATURADA (Entradas > Faturamento)"
+                      : "Faturamento ≥ Entradas — sem inconsistência"
+                  }
                   value={fmtBRL(resultado.diferenca)}
                   destaque
                   negativo={resultado.diferenca > 0}

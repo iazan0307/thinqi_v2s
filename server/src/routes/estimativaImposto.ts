@@ -6,6 +6,7 @@ import {
   uploadEstimativa,
   uploadEstimativaLote,
   getEstimativa,
+  listHistoricoEstimativas,
   downloadEstimativa,
   deleteEstimativa,
 } from '../controllers/estimativaImpostoController'
@@ -39,6 +40,7 @@ router.post(
   uploadEstimativaLote,
 )
 router.get('/', getEstimativa)
+router.get('/historico', listHistoricoEstimativas)
 router.get('/:id/pdf', downloadEstimativa)
 router.delete('/:id', requireRole(Role.ADMIN, Role.CONTADOR), deleteEstimativa)
 

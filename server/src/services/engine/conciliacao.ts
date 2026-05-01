@@ -1,29 +1,46 @@
 /**
- * Motor de Conciliação Fiscal (Sprint 2).
+ * Motor de Conciliação Fiscal (Sprint 2 — atualizado Maio/2026).
  *
  * Algoritmo:
- * 1. Entradas bancárias reais = total entradas MENOS aportes de sócios identificados
- * 2. Liquidações de cartão = soma do valor_liquido do mês
- * 3. Total Entradas = banco_real + cartao
- * 4. Inconsistência = total_entradas - faturamento
- * 5. Percentual = (inconsistência / total_entradas) × 100
- * 6. Status: < 2% → OK, 2-5% → AVISO, > 5% → ALERTA
+ *   Entradas reais = Entradas Banco
+ *                    − Aporte Sócios
+ *                    − Recebimentos CC/CD (já vão no valor_bruto do cartão)
+ *                    − Rendimento Aplicação
+ *                    − Resgate Aplicação
+ *                    + Vendas CC/CD (valor_bruto das transações de cartão)
+ *
+ *   Inconsistência = Entradas reais − Faturamento (só conta quando POSITIVA;
+ *                                                  faturamento > entradas é normal)
+ *   Percentual     = (inconsistência / Entradas reais) × 100
+ *   Status         : < 2% → OK, 2–5% → AVISO, > 5% → ALERTA
  */
 
 import { prisma } from '../../utils/prisma'
 import { StatusRelatorio } from '@prisma/client'
-import { isInvestimentoAutomatico } from '../../utils/investimento'
+import {
+  isRendimentoAplicacao,
+  isResgateAplicacao,
+  isRecebimentoCartao,
+} from '../../utils/investimento'
 
 export interface ResultadoConciliacao {
   empresa_id: string
   mes_ref: Date
-  total_banco: number          // Entradas bancárias brutas no período
-  total_socios_banco: number   // Quanto foi excluído por ser de sócio
-  total_entradas_banco: number // total_banco - total_socios_banco
-  total_cartao: number         // Liquidações de cartão (valor_liquido)
-  total_entradas: number       // total_entradas_banco + total_cartao
+  // Breakdown na ordem da visualização (faturamento primeiro, depois entradas)
   total_faturado: number       // Faturamento declarado (NFs)
-  diferenca: number            // total_entradas - total_faturado
+  total_entradas_banco: number // Entradas brutas do banco no período
+  total_aporte_socios: number  // Aportes de sócios identificados (subtraídos)
+  total_recebimentos_cartao: number // Repasses de adquirentes em conta (subtraídos)
+  total_rendimento_aplicacao: number // Rendimento de aplicação (subtraído)
+  total_resgate_aplicacao: number    // Resgate de aplicação (subtraído)
+  total_vendas_cartao: number  // Vendas brutas de cartão (somadas)
+  total_entradas_real: number  // Resultado da fórmula acima
+  // Compat com interfaces antigas (frontend ainda lê esses nomes)
+  total_banco: number          // = total_entradas_banco
+  total_socios_banco: number   // = total_aporte_socios
+  total_cartao: number         // = total_vendas_cartao
+  total_entradas: number       // = total_entradas_real
+  diferenca: number            // = total_entradas_real - total_faturado (só positivo)
   percentual_inconsistencia: number
   status: StatusRelatorio
 }
@@ -34,7 +51,6 @@ function calcStatus(pct: number): StatusRelatorio {
   return StatusRelatorio.ALERTA
 }
 
-/** Retorna a data de início e fim do mês a partir de um Date */
 function mesBounds(mes: Date): { inicio: Date; fim: Date } {
   const y = mes.getUTCFullYear()
   const m = mes.getUTCMonth()
@@ -50,7 +66,8 @@ export async function calcularConciliacao(
 ): Promise<ResultadoConciliacao> {
   const { inicio, fim } = mesBounds(mesRef)
 
-  // 1. Entradas bancárias do período
+  // 1. Entradas bancárias do período (todas, sem filtrar — somamos pelo bruto e
+  // subtraímos cada categoria depois para garantir transparência no demonstrativo)
   const entradas = await prisma.transacaoBancaria.findMany({
     where: {
       empresa_id: empresaId,
@@ -60,27 +77,44 @@ export async function calcularConciliacao(
     select: { valor: true, socio_id: true, descricao: true },
   })
 
-  // Resgate de aplicação automática não é receita operacional — exclui do cálculo
-  // para não inflar o total de entradas e gerar alerta de inconsistência falso.
-  const entradasOperacionais = entradas.filter(
-    t => !isInvestimentoAutomatico(t.descricao),
-  )
+  let totalBancoBruto = 0
+  let totalAporteSocios = 0
+  let totalRecebimentosCartao = 0
+  let totalRendimentoAplicacao = 0
+  let totalResgateAplicacao = 0
 
-  const totalBanco = entradasOperacionais.reduce((sum, t) => sum + Number(t.valor), 0)
-  const totalSociosBanco = entradasOperacionais
-    .filter(t => t.socio_id !== null)
-    .reduce((sum, t) => sum + Number(t.valor), 0)
-  const totalEntradasBanco = totalBanco - totalSociosBanco
+  for (const t of entradas) {
+    const valor = Number(t.valor)
+    totalBancoBruto += valor
+    if (t.socio_id !== null) {
+      totalAporteSocios += valor
+      continue
+    }
+    if (isRendimentoAplicacao(t.descricao)) {
+      totalRendimentoAplicacao += valor
+      continue
+    }
+    if (isResgateAplicacao(t.descricao)) {
+      totalResgateAplicacao += valor
+      continue
+    }
+    if (isRecebimentoCartao(t.descricao)) {
+      totalRecebimentosCartao += valor
+      continue
+    }
+  }
 
-  // 2. Liquidações de cartão do período
+  // 2. Vendas de cartão (valor_bruto, não líquido) — representa o faturamento
+  // real do maquininha antes da taxa do credenciador. Substitui o repasse
+  // líquido que cai no banco (já filtrado acima).
   const cartoes = await prisma.transacaoCartao.findMany({
     where: {
       empresa_id: empresaId,
       data: { gte: inicio, lte: fim },
     },
-    select: { valor_liquido: true },
+    select: { valor_bruto: true },
   })
-  const totalCartao = cartoes.reduce((sum, t) => sum + Number(t.valor_liquido), 0)
+  const totalVendasCartao = cartoes.reduce((sum, t) => sum + Number(t.valor_bruto), 0)
 
   // 3. Faturamento declarado do mês
   const faturamento = await prisma.faturamento.findFirst({
@@ -92,21 +126,38 @@ export async function calcularConciliacao(
   })
   const totalFaturado = Number(faturamento?.valor_total_nf ?? 0)
 
-  // 4. Cálculo
-  const totalEntradas = totalEntradasBanco + totalCartao
-  const diferenca = totalEntradas - totalFaturado
-  const percentual = totalEntradas > 0 ? (diferenca / totalEntradas) * 100 : 0
-  const status = calcStatus(Math.abs(percentual))
+  // 4. Fórmula consolidada
+  const totalEntradasReal =
+    totalBancoBruto
+    - totalAporteSocios
+    - totalRecebimentosCartao
+    - totalRendimentoAplicacao
+    - totalResgateAplicacao
+    + totalVendasCartao
+
+  // Faturamento > entradas NÃO é inconsistência — apenas inversão (NFs ainda a
+  // receber). Só sinalizamos quando entradas reais excedem o faturamento.
+  const diferencaBruta = totalEntradasReal - totalFaturado
+  const diferenca = diferencaBruta > 0 ? diferencaBruta : 0
+  const percentual = totalEntradasReal > 0 ? (diferenca / totalEntradasReal) * 100 : 0
+  const status = calcStatus(percentual)
 
   return {
     empresa_id: empresaId,
     mes_ref: inicio,
-    total_banco: totalBanco,
-    total_socios_banco: totalSociosBanco,
-    total_entradas_banco: totalEntradasBanco,
-    total_cartao: totalCartao,
-    total_entradas: totalEntradas,
     total_faturado: totalFaturado,
+    total_entradas_banco: totalBancoBruto,
+    total_aporte_socios: totalAporteSocios,
+    total_recebimentos_cartao: totalRecebimentosCartao,
+    total_rendimento_aplicacao: totalRendimentoAplicacao,
+    total_resgate_aplicacao: totalResgateAplicacao,
+    total_vendas_cartao: totalVendasCartao,
+    total_entradas_real: totalEntradasReal,
+    // Aliases legados
+    total_banco: totalBancoBruto,
+    total_socios_banco: totalAporteSocios,
+    total_cartao: totalVendasCartao,
+    total_entradas: totalEntradasReal,
     diferenca,
     percentual_inconsistencia: Math.round(percentual * 100) / 100,
     status,
@@ -126,9 +177,9 @@ export async function salvarRelatorio(
       },
     },
     update: {
-      total_entradas: resultado.total_entradas,
+      total_entradas: resultado.total_entradas_real,
       total_faturado: resultado.total_faturado,
-      total_cartao: resultado.total_cartao,
+      total_cartao: resultado.total_vendas_cartao,
       diferenca: resultado.diferenca,
       percentual_inconsistencia: resultado.percentual_inconsistencia,
       status: resultado.status,
@@ -137,9 +188,9 @@ export async function salvarRelatorio(
     create: {
       empresa_id: resultado.empresa_id,
       mes_ref: resultado.mes_ref,
-      total_entradas: resultado.total_entradas,
+      total_entradas: resultado.total_entradas_real,
       total_faturado: resultado.total_faturado,
-      total_cartao: resultado.total_cartao,
+      total_cartao: resultado.total_vendas_cartao,
       diferenca: resultado.diferenca,
       percentual_inconsistencia: resultado.percentual_inconsistencia,
       status: resultado.status,

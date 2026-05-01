@@ -31,9 +31,53 @@ function mmYYYYtoDate(mm: string, yy: string): Date {
   return new Date(Date.UTC(parseInt(yy, 10), parseInt(mm, 10) - 1, 1))
 }
 
+function parseBRL(s: string): number {
+  const clean = s.replace(/[R$\s]/g, '').replace(/\./g, '').replace(',', '.')
+  const n = parseFloat(clean)
+  return isNaN(n) ? 0 : n
+}
+
+/**
+ * Extrai o "TOTAL" principal (total geral mensal) de um PDF de estimativa
+ * de impostos. Layouts variam, mas seguem o padrão: rótulo "TOTAL" isolado
+ * seguido pelo maior valor da página. Ignora totais por sócio e trimestrais.
+ */
+function extrairTotalGeral(text: string): number {
+  // Estratégia 1: "TOTAL GERAL: R$ X.XXX,XX" ou "Total a pagar: R$ X.XXX,XX"
+  const padroesPrioritarios = [
+    /total\s*geral[^\d]{0,20}([\d.]+,\d{2})/i,
+    /total\s*a\s*(?:pagar|recolher)[^\d]{0,20}([\d.]+,\d{2})/i,
+    /total\s*do\s*m[êe]s[^\d]{0,20}([\d.]+,\d{2})/i,
+    /total\s*mensal[^\d]{0,20}([\d.]+,\d{2})/i,
+  ]
+  for (const re of padroesPrioritarios) {
+    const m = text.match(re)
+    if (m) return parseBRL(m[1])
+  }
+
+  // Estratégia 2: linhas iniciadas por "TOTAL" (case-insensitive) com um valor
+  // monetário. Pega o ÚLTIMO ocorrência (geralmente o consolidado), evitando
+  // totais parciais por sócio que aparecem antes.
+  let valor = 0
+  const reLinhaTotal = /total[^\d\n]{0,40}([\d.]+,\d{2})/gi
+  for (const m of text.matchAll(reLinhaTotal)) {
+    const v = parseBRL(m[1])
+    if (v > valor) valor = v
+  }
+  if (valor > 0) return valor
+
+  // Estratégia 3: maior valor monetário do documento (último recurso).
+  let maior = 0
+  for (const m of text.matchAll(/(?<![\d,])([\d]{1,3}(?:\.\d{3})*,\d{2})(?!\d)/g)) {
+    const v = parseBRL(m[1])
+    if (v > maior) maior = v
+  }
+  return maior
+}
+
 async function extrairCnpjEMes(
   buffer: Buffer,
-): Promise<{ cnpj: string | null; mesRef: Date | null }> {
+): Promise<{ cnpj: string | null; mesRef: Date | null; valorTotal: number }> {
   const data = await pdfParse(buffer)
   const text = data.text ?? ''
 
@@ -66,7 +110,9 @@ async function extrairCnpjEMes(
     if (m) mesRef = mmYYYYtoDate(m[1], m[2])
   }
 
-  return { cnpj, mesRef }
+  const valorTotal = extrairTotalGeral(text)
+
+  return { cnpj, mesRef, valorTotal }
 }
 
 function parseMesRef(mes: string): Date {
@@ -105,26 +151,28 @@ export async function uploadEstimativa(
     const mesRef = parseMesRef(mes_ref)
     const key = buildStorageKey(empresa_id, mesRef)
 
-    // Substitui PDF anterior do mesmo mês, se existir.
-    // Cada upload tem key única (timestamp), então precisamos remover
-    // explicitamente o arquivo antigo do Storage antes de apagar o registro.
-    const existente = await prisma.estimativaImpostoPDF.findUnique({
-      where: { empresa_id_mes_ref: { empresa_id, mes_ref: mesRef } },
-    })
-    if (existente) {
-      await deletePDF(existente.pdf_path)
-      await prisma.estimativaImpostoPDF.delete({ where: { id: existente.id } })
-    }
+    // Extrai o TOTAL principal do PDF antes do upload — não bloqueia o fluxo
+    // se a extração falhar (alguns layouts não trazem o total no formato
+    // esperado; o admin pode editar o valor depois).
+    let valorTotal = 0
+    try {
+      const { valorTotal: v } = await extrairCnpjEMes(file.buffer)
+      valorTotal = v
+    } catch { /* ignora — valor permanece 0 */ }
 
     await uploadPDF(key, file.buffer)
 
+    // Histórico: cada upload é uma nova versão. A listagem usa `uploaded_at desc`
+    // para mostrar a versão mais recente; as anteriores ficam acessíveis pelo
+    // próprio histórico no portal.
     const estimativa = await prisma.estimativaImpostoPDF.create({
       data: {
         empresa_id,
         mes_ref: mesRef,
-        pdf_path: key, // agora é a chave do Storage, não um path de disco
+        pdf_path: key,
         nome_original: file.originalname,
         tamanho_bytes: file.size,
+        valor_total: valorTotal,
         uploaded_by: req.user!.id,
       },
     })
@@ -135,6 +183,7 @@ export async function uploadEstimativa(
       mes_ref: mes_ref,
       nome_original: file.originalname,
       tamanho_bytes: file.size,
+      valor_total: Number(estimativa.valor_total),
     })
   } catch (err) {
     next(err)
@@ -157,46 +206,38 @@ async function persistirEstimativa(params: {
   mes_ref: string
   nome_original: string
   tamanho_bytes: number
+  valor_total: number
 }> {
   const { file, empresa_id_hint, mes_ref_hint, uploaded_by } = params
   if (!file.buffer) throw new AppError(500, 'Upload precisa estar em memória (memoryStorage)')
 
   let empresa_id = empresa_id_hint
   let mesRef: Date | null = mes_ref_hint ? parseMesRef(mes_ref_hint) : null
+  let valorTotal = 0
 
-  // Auto-detecção por PDF quando hints ausentes
-  if (!empresa_id || !mesRef) {
-    const { cnpj, mesRef: mesDetectado } = await extrairCnpjEMes(file.buffer)
-    if (!empresa_id) {
-      if (!cnpj) throw new AppError(422, 'Não foi possível identificar o CNPJ no PDF — selecione uma empresa.')
-      const empresa = await prisma.empresa.findUnique({ where: { cnpj } })
-      if (!empresa) {
-        throw new AppError(
-          404,
-          `CNPJ ${cnpj} do PDF não está cadastrado — cadastre a empresa antes de subir o arquivo.`,
-        )
-      }
-      empresa_id = empresa.id
+  // Sempre extrai o total do PDF (mesmo quando hints estão presentes).
+  const detect = await extrairCnpjEMes(file.buffer)
+  valorTotal = detect.valorTotal
+  if (!empresa_id) {
+    if (!detect.cnpj) throw new AppError(422, 'Não foi possível identificar o CNPJ no PDF — selecione uma empresa.')
+    const empresa = await prisma.empresa.findUnique({ where: { cnpj: detect.cnpj } })
+    if (!empresa) {
+      throw new AppError(
+        404,
+        `CNPJ ${detect.cnpj} do PDF não está cadastrado — cadastre a empresa antes de subir o arquivo.`,
+      )
     }
-    if (!mesRef) {
-      if (!mesDetectado) throw new AppError(422, 'Não foi possível identificar o mês de referência no PDF.')
-      mesRef = mesDetectado
-    }
+    empresa_id = empresa.id
+  }
+  if (!mesRef) {
+    if (!detect.mesRef) throw new AppError(422, 'Não foi possível identificar o mês de referência no PDF.')
+    mesRef = detect.mesRef
   }
 
   const empresa = await prisma.empresa.findUnique({ where: { id: empresa_id } })
   if (!empresa) throw new AppError(404, 'Empresa não encontrada')
 
   const key = buildStorageKey(empresa_id, mesRef)
-
-  const existente = await prisma.estimativaImpostoPDF.findUnique({
-    where: { empresa_id_mes_ref: { empresa_id, mes_ref: mesRef } },
-  })
-  if (existente) {
-    await deletePDF(existente.pdf_path)
-    await prisma.estimativaImpostoPDF.delete({ where: { id: existente.id } })
-  }
-
   await uploadPDF(key, file.buffer)
 
   const estimativa = await prisma.estimativaImpostoPDF.create({
@@ -206,6 +247,7 @@ async function persistirEstimativa(params: {
       pdf_path: key,
       nome_original: file.originalname,
       tamanho_bytes: file.size,
+      valor_total: valorTotal,
       uploaded_by,
     },
   })
@@ -217,6 +259,7 @@ async function persistirEstimativa(params: {
     mes_ref: mesRef.toISOString().slice(0, 7),
     nome_original: file.originalname,
     tamanho_bytes: file.size,
+    valor_total: Number(estimativa.valor_total),
   }
 }
 
@@ -301,14 +344,18 @@ export async function getEstimativa(
       empresaId = q
     }
 
-    const estimativa = await prisma.estimativaImpostoPDF.findUnique({
-      where: { empresa_id_mes_ref: { empresa_id: empresaId, mes_ref: mesRef } },
+    // Sem unique([empresa_id, mes_ref]) — escolhemos a versão mais recente
+    // como a "atual"; o histórico fica acessível via /estimativa-imposto/historico.
+    const estimativa = await prisma.estimativaImpostoPDF.findFirst({
+      where: { empresa_id: empresaId, mes_ref: mesRef },
+      orderBy: { uploaded_at: 'desc' },
       select: {
         id: true,
         mes_ref: true,
         nome_original: true,
         tamanho_bytes: true,
         uploaded_at: true,
+        valor_total: true,
       },
     })
 
@@ -317,7 +364,51 @@ export async function getEstimativa(
       return
     }
 
-    res.json(estimativa)
+    res.json({
+      ...estimativa,
+      valor_total: Number(estimativa.valor_total),
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+/** GET /api/estimativa-imposto/historico → lista todas as versões da empresa */
+export async function listHistoricoEstimativas(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { user } = req
+    if (!user) throw new AppError(401, 'Não autenticado')
+
+    let empresaId: string
+    if (user.role === Role.CLIENTE) {
+      if (!user.empresa_id) throw new AppError(403, 'Usuário não vinculado a uma empresa')
+      empresaId = user.empresa_id
+    } else {
+      const q = req.query['empresa_id'] as string | undefined
+      if (!q) throw new AppError(400, 'empresa_id obrigatório para admin/contador')
+      empresaId = q
+    }
+
+    const items = await prisma.estimativaImpostoPDF.findMany({
+      where: { empresa_id: empresaId },
+      orderBy: [{ mes_ref: 'desc' }, { uploaded_at: 'desc' }],
+      select: {
+        id: true,
+        mes_ref: true,
+        nome_original: true,
+        tamanho_bytes: true,
+        uploaded_at: true,
+        valor_total: true,
+      },
+    })
+
+    res.json({
+      data: items.map(i => ({ ...i, valor_total: Number(i.valor_total) })),
+    })
   } catch (err) {
     next(err)
   }

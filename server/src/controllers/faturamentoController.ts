@@ -48,16 +48,43 @@ export async function uploadFaturamento(
 
     try {
       const ext = path.extname(file.originalname).toLowerCase()
-      let resultados
+      let resultadosBrutos
 
       if (ext === '.xlsx' || ext === '.xls') {
         const buffer = await fs.readFile(file.path)
-        resultados = await parseIAZAN(buffer, mesRefDate)
+        resultadosBrutos = await parseIAZAN(buffer, mesRefDate)
       } else if (ext === '.csv') {
         const content = await fs.readFile(file.path, 'utf-8')
-        resultados = parseIAZANcsv(content, mesRefDate)
+        resultadosBrutos = parseIAZANcsv(content, mesRefDate)
       } else {
         throw new AppError(422, 'Formato não suportado. Use XLSX ou CSV.')
+      }
+
+      // Validação por CNPJ: a planilha IAZAN pode conter notas de várias empresas.
+      // Quando o admin seleciona uma empresa, importamos só as notas cujo CNPJ do
+      // emitente bate com o CNPJ da empresa selecionada. Os demais são bloqueados.
+      const cnpjEmpresa = empresa.cnpj.replace(/\D/g, '')
+      const resultados = resultadosBrutos.filter(r =>
+        (r.cnpj_emitente || '').replace(/\D/g, '') === cnpjEmpresa,
+      )
+      const bloqueados = resultadosBrutos
+        .filter(r => (r.cnpj_emitente || '').replace(/\D/g, '') !== cnpjEmpresa)
+        .map(r => ({
+          cnpj_emitente: r.cnpj_emitente,
+          nome_emitente: r.nome_emitente,
+          mes_ref:       r.mes_ref.toISOString().slice(0, 7),
+          qtd_notas:     r.qtd_notas,
+          valor_total_nf: r.valor_total_nf,
+          motivo:        `Nota da empresa ${r.cnpj_emitente || '(sem CNPJ)'} — ${r.nome_emitente || 'desconhecida'}. Não pode ser importada em ${empresa.cnpj} - ${empresa.razao_social}.`,
+        }))
+
+      if (resultados.length === 0 && bloqueados.length > 0) {
+        const lista = bloqueados.map(b => `${b.cnpj_emitente || 'sem CNPJ'} (${b.nome_emitente || '?'})`).join('; ')
+        throw new AppError(
+          422,
+          `Nenhuma nota da planilha pertence à empresa ${empresa.razao_social} (CNPJ ${empresa.cnpj}). ` +
+          `CNPJ(s) encontrado(s): ${lista}. Arquivo ignorado.`,
+        )
       }
 
       // Upsert faturamento por mês
@@ -101,6 +128,7 @@ export async function uploadFaturamento(
       res.status(201).json({
         arquivo_id:      arquivo.id,
         meses_importados: resultados.length,
+        bloqueados,
         resultados: resultados.map(r => ({
           mes_ref:             r.mes_ref.toISOString().slice(0, 7),
           cnpj_emitente:       r.cnpj_emitente,

@@ -31,31 +31,92 @@ export interface ContrachequeParsed {
   cpf: string | null       // 11 dígitos (será descartado após o matching)
   valor_liquido: number
   mes_ref: Date | null
+  // CPFs encontrados no PDF (todos), na ordem em que aparecem.
+  // Permite ao chamador casar com sócios cadastrados quando o
+  // primeiro CPF do PDF é de funcionário (não-sócio).
+  cpfs_no_pdf?: string[]
+  // Texto bruto + páginas — usado por aplicarContracheque para extrair
+  // o valor líquido perto do CPF do sócio (em PDFs com várias páginas).
+  paginas?: string[]
+}
+
+const RE_CPF = /\d{3}\.\d{3}\.\d{3}-\d{2}|(?<!\d)\d{11}(?!\d)/g
+
+const PADROES_LIQUIDO: RegExp[] = [
+  /total\s*l[íi]quido[^\d]*([\d.]+,\d{2})/i,
+  /l[íi]quido\s*(?:a\s*receber)?[^\d]*([\d.]+,\d{2})/i,
+  /valor\s*l[íi]quido[^\d]*([\d.]+,\d{2})/i,
+]
+
+function extrairValorLiquido(texto: string): number {
+  for (const re of PADROES_LIQUIDO) {
+    const m = texto.match(re)
+    if (m) return parseBRL(m[1])
+  }
+  return 0
+}
+
+/**
+ * pdf-parse retorna o texto inteiro concatenado, sem marcadores de página
+ * confiáveis. Usamos `pagerender` para coletar o texto de cada página
+ * separadamente — necessário porque um contracheque pode ter o sócio na
+ * 2ª/3ª página (com funcionários nas demais).
+ */
+interface PdfPageItem { str: string }
+interface PdfTextContent { items: PdfPageItem[] }
+interface PdfPage {
+  getTextContent(opts: { normalizeWhitespace: boolean; disableCombineTextItems: boolean }): Promise<PdfTextContent>
+}
+
+async function extrairPaginas(buffer: Buffer): Promise<string[]> {
+  const paginas: string[] = []
+  await pdfParse(buffer, {
+    pagerender: async (pageData: PdfPage) => {
+      const tc = await pageData.getTextContent({
+        normalizeWhitespace: true,
+        disableCombineTextItems: false,
+      })
+      const txt = tc.items.map(it => it.str).join('\n')
+      paginas.push(txt)
+      return txt
+    },
+  })
+  return paginas
 }
 
 async function extrairContracheque(buffer: Buffer): Promise<ContrachequeParsed> {
   const data = await pdfParse(buffer)
   const text = data.text ?? ''
 
-  // CNPJ
+  // CNPJ — mesmo em PDFs com várias páginas, o CNPJ do empregador costuma
+  // aparecer no cabeçalho de cada uma; pegamos a primeira ocorrência.
   const matchCnpj = text.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|(?<!\d)\d{14}(?!\d)/)
   const cnpj = matchCnpj ? normalizeCnpj(matchCnpj[0]) : null
 
-  // CPF
-  const matchCpf = text.match(/\d{3}\.\d{3}\.\d{3}-\d{2}|(?<!\d)\d{11}(?!\d)/)
-  const cpf = matchCpf ? normalizeCpf(matchCpf[0]) : null
+  // Coleta TODOS os CPFs do PDF (não apenas o primeiro).
+  // Em contracheques com múltiplos beneficiários (sócio + funcionários),
+  // o aplicarContracheque escolhe o que casa com um sócio cadastrado.
+  const cpfs_no_pdf = Array.from(
+    new Set(
+      Array.from(text.matchAll(RE_CPF)).map(m => normalizeCpf(m[0])),
+    ),
+  )
+  const cpf = cpfs_no_pdf[0] ?? null
 
-  // Valor líquido: "Total Líquido\n1.442,69" ou "Líquido: 1.442,69"
-  let valor_liquido = 0
-  const padroes = [
-    /total\s*l[íi]quido[^\d]*([\d.]+,\d{2})/i,
-    /l[íi]quido\s*(?:a\s*receber)?[^\d]*([\d.]+,\d{2})/i,
-    /valor\s*l[íi]quido[^\d]*([\d.]+,\d{2})/i,
-  ]
-  for (const re of padroes) {
-    const m = text.match(re)
-    if (m) { valor_liquido = parseBRL(m[1]); break }
+  // Coleta texto por página para extrair o valor líquido perto do CPF correto
+  let paginas: string[] = []
+  try {
+    paginas = await extrairPaginas(buffer)
+  } catch {
+    // Fallback: divide o texto em "páginas" pelas form-feeds que pdf-parse
+    // ocasionalmente emite, ou usa o texto inteiro como única página.
+    paginas = text.split(/\f/).filter(Boolean)
+    if (paginas.length === 0) paginas = [text]
   }
+
+  // Valor líquido (fallback global): primeira ocorrência no texto inteiro.
+  // Pode ser sobrescrito em aplicarContracheque ao extrair perto do CPF do sócio.
+  const valor_liquido = extrairValorLiquido(text)
 
   // Mês de referência: "01/2026" isolado (a data de pagamento 31/01/2026 vira DD/MM/YYYY)
   let mes_ref: Date | null = null
@@ -65,7 +126,7 @@ async function extrairContracheque(buffer: Buffer): Promise<ContrachequeParsed> 
     mes_ref = new Date(Date.UTC(parseInt(m[2], 10), parseInt(m[1], 10) - 1, 1))
   }
 
-  return { cnpj, cpf, valor_liquido, mes_ref }
+  return { cnpj, cpf, valor_liquido, mes_ref, cpfs_no_pdf, paginas }
 }
 
 /**
@@ -84,49 +145,77 @@ async function aplicarContracheque(parsed: ContrachequeParsed): Promise<{
   if (!parsed.cnpj) {
     throw new AppError(422, 'CNPJ do empregador não identificado no contracheque')
   }
-  if (!parsed.cpf) {
-    throw new AppError(422, 'CPF do funcionário não identificado no contracheque')
-  }
-  if (!isValidCpf(parsed.cpf)) {
-    throw new AppError(422, `CPF extraído (${parsed.cpf}) é inválido`)
-  }
-  if (parsed.valor_liquido <= 0) {
-    throw new AppError(422, 'Valor líquido do pró-labore não identificado no contracheque')
-  }
 
   const empresa = await prisma.empresa.findUnique({ where: { cnpj: parsed.cnpj } })
   if (!empresa) {
     throw new AppError(404, `CNPJ ${parsed.cnpj} do contracheque não está cadastrado — cadastre a empresa primeiro.`)
   }
 
-  // Filtro grosso por prefixo+sufixo dentro da empresa; depois bcrypt.compare
-  const { prefixo, sufixo } = extractCpfParts(parsed.cpf)
-  const candidatos = await prisma.socio.findMany({
-    where: {
-      empresa_id:  empresa.id,
-      cpf_prefixo: prefixo,
-      cpf_sufixo:  sufixo,
-      ativo:       true,
+  // Coleta todos os CPFs distintos no PDF (válidos). Ordem importa: o
+  // primeiro CPF que casa com um sócio cadastrado é o escolhido.
+  const cpfsValidos = (parsed.cpfs_no_pdf ?? (parsed.cpf ? [parsed.cpf] : []))
+    .filter(c => isValidCpf(c))
+  if (cpfsValidos.length === 0) {
+    throw new AppError(422, 'Nenhum CPF válido identificado no contracheque')
+  }
+
+  // Carrega TODOS os sócios ativos da empresa. O matching contra cada CPF
+  // do PDF é feito por prefixo+sufixo + bcrypt para respeitar LGPD.
+  const socios = await prisma.socio.findMany({
+    where: { empresa_id: empresa.id, ativo: true },
+    select: {
+      id: true, nome: true, cpf_hash: true, cpf_prefixo: true, cpf_sufixo: true, cpf_mascara: true,
     },
   })
 
-  let socio: typeof candidatos[number] | null = null
-  for (const c of candidatos) {
-    if (await bcrypt.compare(parsed.cpf, c.cpf_hash)) { socio = c; break }
+  type SocioMin = typeof socios[number]
+  let socio: SocioMin | null = null
+  let cpfDoSocio: string | null = null
+
+  for (const cpfPdf of cpfsValidos) {
+    const { prefixo, sufixo } = extractCpfParts(cpfPdf)
+    const candidatos = socios.filter(s => s.cpf_prefixo === prefixo && s.cpf_sufixo === sufixo)
+    for (const c of candidatos) {
+      if (await bcrypt.compare(cpfPdf, c.cpf_hash)) {
+        socio = c
+        cpfDoSocio = cpfPdf
+        break
+      }
+    }
+    if (socio) break
   }
 
-  if (!socio) {
+  if (!socio || !cpfDoSocio) {
     throw new AppError(
       404,
-      `Sócio com CPF informado no contracheque não encontrado em ${empresa.razao_social} — cadastre o sócio antes.`,
+      `CPF do sócio não identificado em nenhuma página do documento (${empresa.razao_social}). ` +
+      `Verifique se o sócio está cadastrado.`,
     )
+  }
+
+  // Extrai o valor líquido da página onde o CPF do sócio aparece.
+  // Se não houver páginas separadas, cai no valor extraído do texto inteiro.
+  let valorLiquido = parsed.valor_liquido
+  const paginas = parsed.paginas ?? []
+  if (paginas.length > 0) {
+    for (const pag of paginas) {
+      const cpfsNaPagina = Array.from(pag.matchAll(RE_CPF)).map(m => normalizeCpf(m[0]))
+      if (cpfsNaPagina.includes(cpfDoSocio)) {
+        const v = extrairValorLiquido(pag)
+        if (v > 0) { valorLiquido = v; break }
+      }
+    }
+  }
+
+  if (valorLiquido <= 0) {
+    throw new AppError(422, 'Valor líquido do pró-labore não identificado no contracheque')
   }
 
   const atualizado = await prisma.socio.update({
     where: { id: socio.id },
     data: {
       tem_prolabore:          true,
-      valor_prolabore_mensal: parsed.valor_liquido,
+      valor_prolabore_mensal: valorLiquido,
     },
     select: {
       id:                     true,

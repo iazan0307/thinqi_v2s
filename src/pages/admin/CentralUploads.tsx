@@ -57,6 +57,11 @@ interface ArquivoHistorico {
   mensagem_erro: string | null;
   empresa: { id: string; razao_social: string; cnpj: string } | null;
   uploader: { nome: string } | null;
+  _count?: {
+    transacoes_bancarias: number;
+    transacoes_cartao: number;
+    faturamentos: number;
+  };
 }
 
 interface ArquivosResponse {
@@ -285,6 +290,19 @@ const CentralUploads = () => {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  interface FaturamentoBloqueado {
+    cnpj_emitente: string | null;
+    nome_emitente: string | null;
+    mes_ref: string;
+    qtd_notas: number;
+    valor_total_nf: number;
+    motivo: string;
+  }
+  interface FaturamentoSingleResponse {
+    meses_importados: number;
+    bloqueados?: FaturamentoBloqueado[];
+  }
+
   const uploadFaturamento = useMutation({
     mutationFn: async ({ file, mes }: { file: File; mes: string }) => {
       if (!empresaId) { toast.error("Selecione uma empresa primeiro"); return; }
@@ -292,11 +310,15 @@ const CentralUploads = () => {
       fd.append("arquivo", file);
       fd.append("empresa_id", empresaId);
       fd.append("mes_ref", mes);
-      return api.upload<{ meses_importados: number }>("/faturamento/upload", fd);
+      return api.upload<FaturamentoSingleResponse>("/faturamento/upload", fd);
     },
     onSuccess: (result) => {
       if (!result) return;
-      toast.success(`Faturamento importado: ${result.meses_importados} mês(es)`);
+      const bloq = result.bloqueados ?? [];
+      if (result.meses_importados > 0) {
+        toast.success(`Faturamento importado: ${result.meses_importados} mês(es)`);
+      }
+      bloq.forEach(b => toast.error(b.motivo, { duration: 8000 }));
       qc.invalidateQueries({ queryKey: ["admin-arquivos"] });
     },
     onError: (err: Error) => toast.error(err.message),
@@ -486,6 +508,8 @@ const CentralUploads = () => {
       setFila(prev => prev.filter(a => a.id !== result.id));
       qc.invalidateQueries({ queryKey: ["admin-arquivos"] });
       qc.invalidateQueries({ queryKey: ["retiradas"] });
+      qc.invalidateQueries({ queryKey: ["relatorios"] });
+      qc.invalidateQueries({ queryKey: ["relatorios-risco"] });
       toast.success("Arquivo excluído e transações removidas.");
     },
     onError: (err: Error) => toast.error(err.message),
@@ -595,7 +619,7 @@ const CentralUploads = () => {
             <DropZone title="Faturamento / Robô IAZAN" icon={FileSpreadsheet} accept=".xlsx,.csv" multiple
               description="Notas IAZAN — empresa e mês detectados automaticamente" tipo="faturamento" onFiles={handleFiles} />
             <DropZone title="Operadoras de Cartão" icon={CreditCard} accept=".csv,.xlsx" multiple
-              description="Stone, Cielo, Rede… empresa detectada pelo CNPJ" tipo="cartao" onFiles={handleFiles} />
+              description='Stone, Cielo, Rede, PagSeguro. Exige colunas "Bandeira" + "Valor bruto"/"Valor líquido". Confira os totais após importar.' tipo="cartao" onFiles={handleFiles} />
             <DropZone title="Estimativa de Impostos" icon={Calculator} accept=".pdf" multiple
               description="PDFs mensais — empresa e mês extraídos do arquivo" tipo="estimativa" onFiles={handleFiles} />
             <DropZone title="Contracheque Pró-labore" icon={Receipt} accept=".pdf" multiple
@@ -822,9 +846,32 @@ const CentralUploads = () => {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir arquivo?</AlertDialogTitle>
-            <AlertDialogDescription>
-              O arquivo <strong>{arquivoParaExcluir?.nome_original}</strong> e todas as transações
-              geradas a partir dele serão removidos permanentemente. Essa ação não pode ser desfeita.
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  O arquivo <strong>{arquivoParaExcluir?.nome_original}</strong> e todas as
+                  transações geradas a partir dele serão removidos permanentemente. Essa ação
+                  não pode ser desfeita.
+                </p>
+                {(() => {
+                  const c = arquivoParaExcluir?._count;
+                  const total =
+                    (c?.transacoes_bancarias ?? 0) +
+                    (c?.transacoes_cartao ?? 0) +
+                    (c?.faturamentos ?? 0);
+                  if (!c || total === 0) return null;
+                  const partes: string[] = [];
+                  if (c.transacoes_bancarias) partes.push(`${c.transacoes_bancarias} transação(ões) bancária(s)`);
+                  if (c.transacoes_cartao)    partes.push(`${c.transacoes_cartao} venda(s) de cartão`);
+                  if (c.faturamentos)         partes.push(`${c.faturamentos} faturamento(s)`);
+                  return (
+                    <p className="text-foreground">
+                      Vai remover <strong>{total} lançamento{total !== 1 ? "s" : ""}</strong> importado{total !== 1 ? "s" : ""} deste arquivo
+                      {partes.length > 0 ? ` (${partes.join(", ")})` : ""}.
+                    </p>
+                  );
+                })()}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

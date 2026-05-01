@@ -49,6 +49,13 @@ export async function listArquivos(
           mensagem_erro: true,
           empresa: { select: { id: true, razao_social: true, cnpj: true } },
           uploader: { select: { nome: true } },
+          _count: {
+            select: {
+              transacoes_bancarias: true,
+              transacoes_cartao:    true,
+              faturamentos:         true,
+            },
+          },
         },
       }),
     ])

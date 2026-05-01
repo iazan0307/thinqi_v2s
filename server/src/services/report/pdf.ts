@@ -194,16 +194,18 @@ export function gerarPDFRelatorio(
       // ════════════════════════════════════════════════════════════════════
       let ry = c1Y + 80
 
-      sectionTitle(doc, 'DEMONSTRATIVO DE ENTRADAS', ML, ry, W)
+      sectionTitle(doc, 'DEMONSTRATIVO DE CONCILIAÇÃO', ML, ry, W)
       ry += 20
 
       const rows: [string, string, Parameters<typeof tableRow>[6]][] = [
-        ['Entradas bancárias brutas',             fmtBRL(resultado.total_banco),           {}],
-        ['(−) Aportes de sócios identificados',  `− ${fmtBRL(resultado.total_socios_banco)}`, { valueColor: C.red }],
-        ['Entradas bancárias válidas',            fmtBRL(resultado.total_entradas_banco),  {}],
-        ['(+) Liquidações de cartão (líquido)',   fmtBRL(resultado.total_cartao),          { valueColor: C.green }],
-        ['TOTAL DE ENTRADAS REAIS',              fmtBRL(resultado.total_entradas),        { bold: true, highlight: true }],
-        ['(−) Faturamento declarado (NFs)',       `− ${fmtBRL(resultado.total_faturado)}`, { valueColor: C.red }],
+        ['Faturamento declarado (NFs)',         fmtBRL(resultado.total_faturado),                { bold: true }],
+        ['Entradas Banco',                       fmtBRL(resultado.total_entradas_banco),          {}],
+        ['(−) Aporte Sócios',                    `− ${fmtBRL(resultado.total_aporte_socios)}`,    { valueColor: C.red }],
+        ['(−) Recebimentos CC/CD',               `− ${fmtBRL(resultado.total_recebimentos_cartao)}`, { valueColor: C.red }],
+        ['(−) Rendimento Aplicação',             `− ${fmtBRL(resultado.total_rendimento_aplicacao)}`, { valueColor: C.red }],
+        ['(−) Resgate Aplicação',                `− ${fmtBRL(resultado.total_resgate_aplicacao)}`, { valueColor: C.red }],
+        ['(+) Vendas CC/CD',                     fmtBRL(resultado.total_vendas_cartao),           { valueColor: C.green }],
+        ['ENTRADAS REAIS',                       fmtBRL(resultado.total_entradas_real),           { bold: true, highlight: true }],
       ]
 
       rows.forEach(([label, value, opts], idx) => {
@@ -215,10 +217,13 @@ export function gerarPDFRelatorio(
       hLine(doc, ML, ry + 3, W)
       ry += 18
 
-      // Diferença
+      // Diferença — só conta quando entradas > faturamento (sentido contrário não é inconsistência)
       const difColor = resultado.diferenca > 0 ? C.red : C.green
+      const difLabel = resultado.diferenca > 0
+        ? 'DIFERENÇA NÃO FATURADA'
+        : 'FATURAMENTO ≥ ENTRADAS — SEM INCONSISTÊNCIA'
       doc.fillColor(C.dark).fontSize(9.5).font('Helvetica-Bold')
-        .text('DIFERENÇA NÃO FATURADA', ML + 5, ry + 3, { lineBreak: false })
+        .text(difLabel, ML + 5, ry + 3, { lineBreak: false })
       doc.fillColor(difColor).fontSize(16).font('Helvetica-Bold')
         .text(fmtBRL(resultado.diferenca), ML, ry - 1, { width: W - 5, align: 'right', lineBreak: false })
       ry += 34

@@ -225,7 +225,7 @@ const Clientes = () => {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="SOCIO">Sócio</SelectItem>
-                            <SelectItem value="ADMINISTRATIVO">Administrativo</SelectItem>
+                            <SelectItem value="ADMINISTRATIVO">Secretária</SelectItem>
                           </SelectContent>
                         </Select>
                       </TableCell>
@@ -339,7 +339,7 @@ const Clientes = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="SOCIO">Sócio — vê tudo, inclusive distribuição</SelectItem>
-                  <SelectItem value="ADMINISTRATIVO">Administrativo — não vê retiradas de sócios</SelectItem>
+                  <SelectItem value="ADMINISTRATIVO">Secretária — não vê retiradas de sócios</SelectItem>
                 </SelectContent>
               </Select>
             </div>

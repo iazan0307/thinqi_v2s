@@ -5,14 +5,14 @@ import { AppError } from '../middleware/errorHandler'
 import { Role, PerfilCliente } from '@prisma/client'
 import { calcularIrDevido, STATUS_DISTRIBUICAO } from '../utils/distribuicao'
 
-/** Perfil ADMINISTRATIVO: cliente com acesso restrito não consulta retiradas */
-async function bloqueiaAdministrativo(userId: string, role: Role): Promise<boolean> {
+/** Perfil SECRETARIA: cliente com acesso restrito não consulta retiradas */
+async function bloqueiaSecretaria(userId: string, role: Role): Promise<boolean> {
   if (role !== Role.CLIENTE) return false
   const u = await prisma.usuario.findUnique({
     where: { id: userId },
     select: { perfil_cliente: true },
   })
-  return u?.perfil_cliente === PerfilCliente.ADMINISTRATIVO
+  return u?.perfil_cliente === PerfilCliente.SECRETARIA
 }
 
 export async function listRetiradas(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -29,7 +29,7 @@ export async function listRetiradas(req: Request, res: Response, next: NextFunct
     const limit = Math.min(100, Math.max(1, parseInt(limitStr, 10)))
 
     const user = req.user!
-    if (await bloqueiaAdministrativo(user.id, user.role)) {
+    if (await bloqueiaSecretaria(user.id, user.role)) {
       throw new AppError(403, 'Perfil administrativo não tem acesso às retiradas de sócios')
     }
     // Clientes só veem dados da própria empresa
@@ -89,7 +89,7 @@ export async function exportRetiradas(req: Request, res: Response, next: NextFun
     const { empresa_id, mes_ref, alerta_limite } = req.query as Record<string, string>
 
     const user = req.user!
-    if (await bloqueiaAdministrativo(user.id, user.role)) {
+    if (await bloqueiaSecretaria(user.id, user.role)) {
       throw new AppError(403, 'Perfil administrativo não tem acesso às retiradas de sócios')
     }
     const effectiveEmpresaId =

@@ -199,13 +199,13 @@ const Conciliacao = () => {
               <CardTitle className="text-base">Demonstrativo Detalhado</CardTitle>
             </CardHeader>
             <CardContent className="space-y-1 pt-0">
-              <LinhaValor label="Faturamento declarado (NFs)" value={fmtBRL(resultado.total_faturado)} destaque />
+              <LinhaValor label="Faturamento (NFS emitidas)" value={fmtBRL(resultado.total_faturado)} destaque />
               <div className="pt-2 mt-2 border-t border-border" />
               <LinhaValor label="Entradas Banco" value={fmtBRL(resultado.total_entradas_banco)} />
-              <LinhaValor label="(−) Aporte Sócios" value={fmtBRL(resultado.total_aporte_socios)} negativo />
+              <LinhaValor label="(−) Aporte de Sócios" value={fmtBRL(resultado.total_aporte_socios)} negativo />
               <LinhaValor label="(−) Recebimentos CC/CD" value={fmtBRL(resultado.total_recebimentos_cartao)} negativo />
-              <LinhaValor label="(−) Rendimento Aplicação" value={fmtBRL(resultado.total_rendimento_aplicacao)} negativo />
-              <LinhaValor label="(−) Resgate Aplicação" value={fmtBRL(resultado.total_resgate_aplicacao)} negativo />
+              <LinhaValor label="(−) Rendimento Aplicação Automática" value={fmtBRL(resultado.total_rendimento_aplicacao)} negativo />
+              <LinhaValor label="(−) Resgate Aplicações Financeiras" value={fmtBRL(resultado.total_resgate_aplicacao)} negativo />
               <LinhaValor label="(+) Vendas CC/CD" value={fmtBRL(resultado.total_vendas_cartao)} />
               <LinhaValor label="ENTRADAS REAIS" value={fmtBRL(resultado.total_entradas_real)} destaque />
               <div className="pt-2 mt-2 border-t border-border">

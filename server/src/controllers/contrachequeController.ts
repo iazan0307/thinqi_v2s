@@ -84,6 +84,26 @@ async function extrairPaginas(buffer: Buffer): Promise<string[]> {
   return paginas
 }
 
+/**
+ * Pipeline público: a partir do buffer do PDF, extrai os campos e aplica
+ * (resolve empresa+sócio, atualiza pró-labore). Usado pelo lote unificado.
+ */
+export async function processarContrachequeBuffer(params: {
+  buffer: Buffer
+  originalname: string
+}): Promise<{
+  empresa_id: string
+  empresa_razao: string
+  socio_id: string
+  socio_nome: string
+  cpf_mascara: string
+  valor_prolabore_mensal: number
+  mes_ref: string | null
+}> {
+  const parsed = await extrairContracheque(params.buffer)
+  return aplicarContracheque(parsed)
+}
+
 async function extrairContracheque(buffer: Buffer): Promise<ContrachequeParsed> {
   const data = await pdfParse(buffer)
   const text = data.text ?? ''

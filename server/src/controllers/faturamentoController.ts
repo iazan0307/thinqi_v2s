@@ -4,6 +4,7 @@ import { prisma } from '../utils/prisma'
 import { AppError } from '../middleware/errorHandler'
 import { TipoArquivo, StatusArquivo, Prisma } from '@prisma/client'
 import { parseIAZAN, parseIAZANcsv, FaturamentoParseado } from '../services/parser/iazan'
+import { hashFile, findUploadDuplicado } from '../utils/hash'
 import * as path from 'path'
 
 function normalizeCnpj(cnpj: string): string {
@@ -34,6 +35,15 @@ export async function uploadFaturamento(
     }
     const mesRefDate = new Date(Date.UTC(year, month - 1, 1))
 
+    const hash_sha256 = await hashFile(file.path)
+    const dup = await findUploadDuplicado({ empresa_id, hash_sha256 })
+    if (dup) {
+      throw new AppError(
+        409,
+        `Este arquivo já foi importado anteriormente como "${dup.nome_original}" em ${dup.uploaded_at.toISOString().slice(0, 10)}. Reenvio bloqueado para evitar duplicatas.`,
+      )
+    }
+
     const arquivo = await prisma.arquivoUpload.create({
       data: {
         empresa_id,
@@ -41,6 +51,7 @@ export async function uploadFaturamento(
         nome_original: file.originalname,
         nome_storage: file.filename,
         tamanho_bytes: file.size,
+        hash_sha256,
         status: StatusArquivo.PROCESSANDO,
         uploaded_by: req.user!.id,
       },
@@ -160,7 +171,7 @@ export async function uploadFaturamento(
  * Processa 1 planilha IAZAN em lote: parseia → roteia cada linha de faturamento
  * pelo CNPJ do emitente → upsert por (empresa, mes_ref).
  */
-async function processarArquivoFaturamento(params: {
+export async function processarArquivoFaturamento(params: {
   file: Express.Multer.File
   uploaded_by: string
 }): Promise<{
@@ -224,6 +235,22 @@ async function processarArquivoFaturamento(params: {
   }
 
   // Cria 1 ArquivoUpload por empresa afetada (mesmo arquivo físico referenciado)
+  // Dedup: o mesmo arquivo físico pode tocar várias empresas (planilha IAZAN
+  // consolidada), mas para cada empresa, se já foi importado antes (mesmo hash),
+  // bloqueamos o reenvio. O bloqueio é por (empresa, hash) — não global.
+  const hash_sha256 = await hashFile(file.path)
+  const empresasComDup: string[] = []
+  for (const empresa of empresas) {
+    const dup = await findUploadDuplicado({ empresa_id: empresa.id, hash_sha256 })
+    if (dup) empresasComDup.push(empresa.razao_social)
+  }
+  if (empresasComDup.length > 0) {
+    throw new AppError(
+      409,
+      `Este arquivo já foi importado para: ${empresasComDup.join(', ')}. Reenvio bloqueado para evitar duplicatas.`,
+    )
+  }
+
   const arquivoPorEmpresa = new Map<string, string>()
   for (const empresa of empresas) {
     const arquivo = await prisma.arquivoUpload.create({
@@ -233,6 +260,7 @@ async function processarArquivoFaturamento(params: {
         nome_original: file.originalname,
         nome_storage: file.filename,
         tamanho_bytes: file.size,
+        hash_sha256,
         status: StatusArquivo.PROCESSANDO,
         uploaded_by,
       },

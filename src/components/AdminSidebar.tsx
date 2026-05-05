@@ -1,4 +1,4 @@
-import { LayoutDashboard, Building2, Upload, FileBarChart, GitCompare, Users, UserCog, TrendingDown } from "lucide-react";
+import { LayoutDashboard, Building2, Upload, FileBarChart, GitCompare, Users, UserCog, TrendingDown, FolderUp } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { ThinqiLogo } from "@/components/ThinqiLogo";
@@ -18,6 +18,7 @@ const items = [
   { title: "Visão Geral", url: "/admin", icon: LayoutDashboard },
   { title: "Empresas & Sócios", url: "/admin/empresas", icon: Building2 },
   { title: "Central de Uploads", url: "/admin/uploads", icon: Upload },
+  { title: "Upload em Lote", url: "/admin/upload-lote", icon: FolderUp },
   { title: "Conciliação Fiscal", url: "/admin/conciliacao", icon: GitCompare },
   { title: "Relatórios Gerenciais", url: "/admin/relatorios", icon: FileBarChart },
   { title: "Distribuição de Lucros", url: "/admin/retiradas", icon: TrendingDown },

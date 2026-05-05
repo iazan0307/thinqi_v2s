@@ -15,6 +15,7 @@ import AdminLayout from "./layouts/AdminLayout";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import EmpresasSocios from "./pages/admin/EmpresasSocios";
 import CentralUploads from "./pages/admin/CentralUploads";
+import UploadLote from "./pages/admin/UploadLote";
 import Conciliacao from "./pages/admin/Conciliacao";
 import RelatoriosGerenciais from "./pages/admin/RelatoriosGerenciais";
 import Usuarios from "./pages/admin/Usuarios";
@@ -79,6 +80,7 @@ const App = () => (
               <Route index element={<AdminDashboard />} />
               <Route path="empresas" element={<EmpresasSocios />} />
               <Route path="uploads" element={<CentralUploads />} />
+              <Route path="upload-lote" element={<UploadLote />} />
               <Route path="conciliacao" element={<Conciliacao />} />
               <Route path="relatorios" element={<RelatoriosGerenciais />} />
               <Route path="clientes" element={<Clientes />} />

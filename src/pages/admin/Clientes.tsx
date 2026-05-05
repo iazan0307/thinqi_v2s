@@ -26,7 +26,7 @@ import { toast } from "sonner";
 interface Empresa { id: string; razao_social: string }
 interface EmpresasResponse { data: Empresa[] }
 
-type PerfilCliente = "SOCIO" | "ADMINISTRATIVO";
+type PerfilCliente = "SOCIO" | "SECRETARIA";
 
 interface Cliente {
   id: string;
@@ -225,7 +225,7 @@ const Clientes = () => {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="SOCIO">Sócio</SelectItem>
-                            <SelectItem value="ADMINISTRATIVO">Secretária</SelectItem>
+                            <SelectItem value="SECRETARIA">Secretária</SelectItem>
                           </SelectContent>
                         </Select>
                       </TableCell>
@@ -339,7 +339,7 @@ const Clientes = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="SOCIO">Sócio — vê tudo, inclusive distribuição</SelectItem>
-                  <SelectItem value="ADMINISTRATIVO">Secretária — não vê retiradas de sócios</SelectItem>
+                  <SelectItem value="SECRETARIA">Secretária — não vê retiradas de sócios</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { api } from '@/lib/api'
 
 export type Role = 'ADMIN' | 'CONTADOR' | 'CLIENTE'
-export type PerfilCliente = 'SOCIO' | 'ADMINISTRATIVO'
+export type PerfilCliente = 'SOCIO' | 'SECRETARIA'
 
 export interface AuthUser {
   id: string

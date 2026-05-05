@@ -22,11 +22,11 @@ const convidarSchema = z.object({
   nome: z.string().min(3, 'Nome deve ter ao menos 3 caracteres'),
   email: z.string().email('E-mail inválido'),
   empresa_id: z.string().min(1, 'empresa_id obrigatório'),
-  perfil_cliente: z.enum(['SOCIO', 'ADMINISTRATIVO']).optional(),
+  perfil_cliente: z.enum(['SOCIO', 'SECRETARIA']).optional(),
 })
 
 const perfilSchema = z.object({
-  perfil_cliente: z.enum(['SOCIO', 'ADMINISTRATIVO']),
+  perfil_cliente: z.enum(['SOCIO', 'SECRETARIA']),
 })
 
 const toggleSchema = z.object({

@@ -12,6 +12,7 @@ import { prisma } from '../utils/prisma'
 import { AppError } from '../middleware/errorHandler'
 import { Role, PerfilCliente } from '@prisma/client'
 import { enviarEmail } from '../services/email/mailer'
+import { audit } from '../utils/audit'
 
 // ─── GET /api/admin/arquivos ──────────────────────────────────────────────────
 // Lista uploads por empresa + tipo (OFX/CSV = extratos bancários; PLANILHA = Robô IAZAN)
@@ -70,6 +71,11 @@ export async function listArquivos(
 // Remove 1 ArquivoUpload + todas as transações geradas a partir dele + arquivo físico.
 // Prisma não cascateia essas relações (nenhuma tem onDelete: Cascade), então a ordem
 // importa: filhos primeiro dentro de uma transação.
+//
+// Pós-delete: recalcula automaticamente o RelatorioDesconforto dos meses afetados
+// pelas transações removidas, para que a conciliação fique imediatamente consistente
+// com os dados restantes. Se nenhum mês for afetado (arquivo sem lançamentos), pula
+// o recálculo.
 
 export async function deleteArquivo(
   req: Request,
@@ -81,9 +87,43 @@ export async function deleteArquivo(
 
     const arquivo = await prisma.arquivoUpload.findUnique({
       where: { id },
-      select: { id: true, nome_storage: true, empresa_id: true },
+      select: {
+        id: true,
+        nome_storage: true,
+        nome_original: true,
+        empresa_id: true,
+        tipo: true,
+        empresa: { select: { razao_social: true } },
+      },
     })
     if (!arquivo) throw new AppError(404, 'Arquivo não encontrado')
+
+    // Coleta os meses afetados ANTES de deletar — o conjunto é usado depois pra
+    // recalcular o RelatorioDesconforto de cada mês.
+    const [bancarias, cartoes, faturamentos] = await Promise.all([
+      prisma.transacaoBancaria.findMany({
+        where: { arquivo_id: id },
+        select: { data: true },
+      }),
+      prisma.transacaoCartao.findMany({
+        where: { arquivo_id: id },
+        select: { data: true },
+      }),
+      prisma.faturamento.findMany({
+        where: { arquivo_id: id },
+        select: { mes_ref: true },
+      }),
+    ])
+
+    const totalLancamentos = bancarias.length + cartoes.length + faturamentos.length
+
+    const mesesAfetados = new Set<string>()
+    const adicionarMes = (d: Date) => {
+      mesesAfetados.add(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`)
+    }
+    bancarias.forEach(t => adicionarMes(t.data))
+    cartoes.forEach(t => adicionarMes(t.data))
+    faturamentos.forEach(f => adicionarMes(f.mes_ref))
 
     await prisma.$transaction([
       prisma.transacaoBancaria.deleteMany({ where: { arquivo_id: id } }),
@@ -91,6 +131,25 @@ export async function deleteArquivo(
       prisma.faturamento.deleteMany({ where: { arquivo_id: id } }),
       prisma.arquivoUpload.delete({ where: { id } }),
     ])
+
+    // Auditoria estruturada — gravada em audit_logs (table). Falha no log
+    // não bloqueia o delete (best-effort).
+    await audit({
+      acao: 'DELETE_UPLOAD',
+      entidade: 'ArquivoUpload',
+      entidade_id: id,
+      empresa_id: arquivo.empresa_id,
+      detalhes: {
+        nome_original: arquivo.nome_original,
+        tipo: arquivo.tipo,
+        empresa_razao: arquivo.empresa.razao_social,
+        transacoes_bancarias_removidas: bancarias.length,
+        transacoes_cartao_removidas: cartoes.length,
+        faturamentos_removidos: faturamentos.length,
+        meses_afetados: Array.from(mesesAfetados).sort(),
+      },
+      req,
+    })
 
     // Remove o arquivo físico (se ainda existir). Silencia ENOENT — arquivos antigos
     // podem já ter sumido (Railway recria o disco entre deploys) e isso não é erro.
@@ -106,7 +165,38 @@ export async function deleteArquivo(
       }
     }
 
-    res.json({ deletado: true, id })
+    // Recalcula RelatorioDesconforto dos meses afetados — só quando já existe
+    // um relatório salvo pra aquele (empresa, mês). Se não existe, não cria
+    // (o admin pode não ter aberto a conciliação ainda).
+    if (mesesAfetados.size > 0) {
+      const { calcularConciliacao, salvarRelatorio } = await import('../services/engine/conciliacao')
+      for (const ym of mesesAfetados) {
+        const [y, m] = ym.split('-').map(Number)
+        const mesRef = new Date(Date.UTC(y, m - 1, 1))
+        const fim = new Date(Date.UTC(y, m, 0, 23, 59, 59))
+
+        const existente = await prisma.relatorioDesconforto.findFirst({
+          where: { empresa_id: arquivo.empresa_id, mes_ref: { gte: mesRef, lte: fim } },
+        })
+        if (!existente) continue
+
+        try {
+          const resultado = await calcularConciliacao(arquivo.empresa_id, mesRef)
+          await salvarRelatorio(resultado)
+        } catch (e) {
+          // Recálculo não é crítico — registra warning mas não falha a operação
+          // de delete (o arquivo já foi removido do banco).
+          console.warn(`[ARQUIVOS] Falha ao recalcular conciliação ${arquivo.empresa_id}/${ym}: ${e instanceof Error ? e.message : 'desconhecido'}`)
+        }
+      }
+    }
+
+    res.json({
+      deletado: true,
+      id,
+      lancamentos_removidos: totalLancamentos,
+      meses_recalculados: Array.from(mesesAfetados).sort(),
+    })
   } catch (err) {
     next(err)
   }
@@ -170,7 +260,7 @@ export async function convidarCliente(
       throw new AppError(400, 'nome, email e empresa_id são obrigatórios')
     }
 
-    const perfil = perfil_cliente === 'ADMINISTRATIVO' ? PerfilCliente.ADMINISTRATIVO : PerfilCliente.SOCIO
+    const perfil = perfil_cliente === 'SECRETARIA' ? PerfilCliente.SECRETARIA : PerfilCliente.SOCIO
 
     const empresa = await prisma.empresa.findUnique({ where: { id: empresa_id } })
     if (!empresa) throw new AppError(404, 'Empresa não encontrada')
@@ -238,6 +328,20 @@ export async function convidarCliente(
       console.warn(`[CLIENTES] Falha ao enviar convite para ${email}: ${erroEnvio}`)
     }
 
+    await audit({
+      acao: 'INVITE_CLIENTE',
+      entidade: 'Usuario',
+      entidade_id: usuario.id,
+      empresa_id,
+      detalhes: {
+        nome: usuario.nome,
+        email: usuario.email,
+        perfil_cliente: usuario.perfil_cliente,
+        convite_enviado: conviteEnviado,
+      },
+      req,
+    })
+
     res.status(201).json({
       usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email },
       convite_enviado: conviteEnviado,
@@ -251,6 +355,11 @@ export async function convidarCliente(
 }
 
 // ─── DELETE /api/admin/clientes/:id ──────────────────────────────────────────
+// SOFT DELETE: desativa o cliente (ativo=false) preservando o histórico.
+// Auditoria contábil exige que o registro do cliente continue acessível mesmo
+// após "desativação" — para reconciliações antigas, relatórios exportados etc.
+// Uso da flag `ativo` impede login (vide authController.login) e oculta da
+// listagem padrão (filtros de listClientes/listEmpresas).
 
 export async function deletarCliente(
   req: Request,
@@ -265,8 +374,35 @@ export async function deletarCliente(
       throw new AppError(404, 'Cliente não encontrado')
     }
 
-    await prisma.usuario.delete({ where: { id } })
-    res.json({ deletado: true })
+    if (!usuario.ativo) {
+      // Idempotente — já estava desativado.
+      res.json({ deletado: true, ja_inativo: true })
+      return
+    }
+
+    await prisma.usuario.update({
+      where: { id },
+      data: {
+        ativo: false,
+        // Invalida sessão ativa caso o cliente esteja logado no momento.
+        refresh_token_hash: null,
+      },
+    })
+
+    await audit({
+      acao: 'SOFT_DELETE_CLIENTE',
+      entidade: 'Usuario',
+      entidade_id: id,
+      empresa_id: usuario.empresa_id,
+      detalhes: {
+        nome: usuario.nome,
+        email: usuario.email,
+        perfil_cliente: usuario.perfil_cliente,
+      },
+      req,
+    })
+
+    res.json({ deletado: true, soft: true })
   } catch (err) {
     next(err)
   }
@@ -283,8 +419,8 @@ export async function atualizarPerfilCliente(
     const { id } = req.params
     const { perfil_cliente } = req.body as { perfil_cliente?: PerfilCliente }
 
-    if (perfil_cliente !== 'SOCIO' && perfil_cliente !== 'ADMINISTRATIVO') {
-      throw new AppError(400, 'perfil_cliente deve ser SOCIO ou ADMINISTRATIVO')
+    if (perfil_cliente !== 'SOCIO' && perfil_cliente !== 'SECRETARIA') {
+      throw new AppError(400, 'perfil_cliente deve ser SOCIO ou SECRETARIA')
     }
 
     const usuario = await prisma.usuario.findUnique({ where: { id } })
@@ -296,6 +432,18 @@ export async function atualizarPerfilCliente(
       where: { id },
       data: { perfil_cliente },
       select: { id: true, nome: true, email: true, perfil_cliente: true },
+    })
+
+    await audit({
+      acao: 'UPDATE_PERFIL_CLIENTE',
+      entidade: 'Usuario',
+      entidade_id: id,
+      empresa_id: usuario.empresa_id,
+      detalhes: {
+        de: usuario.perfil_cliente,
+        para: perfil_cliente,
+      },
+      req,
     })
 
     res.json(updated)
@@ -324,8 +472,21 @@ export async function toggleCliente(
 
     const updated = await prisma.usuario.update({
       where: { id },
-      data: { ativo },
+      data: {
+        ativo,
+        // Ao desativar, invalida a sessão ativa
+        ...(!ativo ? { refresh_token_hash: null } : {}),
+      },
       select: { id: true, nome: true, email: true, ativo: true },
+    })
+
+    await audit({
+      acao: 'TOGGLE_ATIVO_CLIENTE',
+      entidade: 'Usuario',
+      entidade_id: id,
+      empresa_id: usuario.empresa_id,
+      detalhes: { de: usuario.ativo, para: ativo },
+      req,
     })
 
     res.json(updated)
@@ -371,6 +532,15 @@ export async function liberarPeriodo(
     const relatorioLiberado = await prisma.relatorioDesconforto.update({
       where: { id: relatorio!.id },
       data: { liberado: true },
+    })
+
+    await audit({
+      acao: 'LIBERAR_PERIODO',
+      entidade: 'RelatorioDesconforto',
+      entidade_id: relatorioLiberado.id,
+      empresa_id: empresaId,
+      detalhes: { mes_ref: mes },
+      req,
     })
 
     res.json({ liberado: true, relatorio: relatorioLiberado })

@@ -43,10 +43,10 @@ enum Role {
   CLIENTE
 }
 
-// Perfil do usuário CLIENTE. SOCIO vê tudo; ADMINISTRATIVO não vê retiradas/distribuição de sócios.
+// Perfil do usuário CLIENTE. SOCIO vê tudo; SECRETARIA não vê retiradas/distribuição de sócios.
 enum PerfilCliente {
   SOCIO
-  ADMINISTRATIVO
+  SECRETARIA
 }
 
 enum StatusRelatorio {
@@ -64,6 +64,11 @@ model Empresa {
   regime_tributario RegimeTributario @default(SIMPLES_NACIONAL)
   saldo_inicial     Decimal          @default(0) @db.Decimal(14, 2) // Saldo de caixa no início da primeira importação — compõe o cálculo de caixa livre no portal
   ativo             Boolean          @default(true)
+  // Janela do histórico de estimativas exposto ao cliente no portal:
+  //   null = todos os meses (default)
+  //   1    = apenas o mês mais recente
+  //   N    = últimos N meses (ex: 6)
+  estimativa_historico_meses Int?
   created_at        DateTime         @default(now())
   updated_at        DateTime         @updatedAt
 
@@ -78,8 +83,35 @@ model Empresa {
   usuarios             Usuario[]
   estimativas_imposto  EstimativaImpostoPDF[]
   modulos              EmpresaModulo[]
+  contas_bancarias     ContaBancaria[]
 
   @@map("empresas")
+}
+
+// Conta bancária do cliente — cadastrada via upload de OFX. Usada como
+// chave primária de roteamento no upload em lote: BANKID + ACCTID do OFX
+// → ContaBancaria → Empresa. O CNPJ do titular não está nos OFX brasileiros
+// confirmados (Bradesco, Inter, Itaú), então este cadastro é a única forma
+// confiável de identificar o dono de um extrato.
+model ContaBancaria {
+  id              String   @id @default(cuid())
+  empresa_id      String
+  bank_id         String   // Código FEBRABAN (ex: "237", "077", "341") — campo BANKID do OFX
+  bank_name       String   // Nome do banco para exibição (ex: "Bradesco")
+  agencia         String?  // BRANCHID do OFX, se presente
+  acct_id         String   // ACCTID normalizado (sem hífen, espaços, letras)
+  acct_id_display String?  // ACCTID como aparece no OFX original (com dígito/hífen)
+  account_type    String?  // ACCTTYPE do OFX: "CHECKING", "SAVINGS", etc.
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  empresa Empresa @relation(fields: [empresa_id], references: [id], onDelete: Cascade)
+
+  // Mesmo (banco, conta) NUNCA pode estar em duas empresas — garantia de
+  // unicidade no roteamento automático.
+  @@unique([bank_id, acct_id])
+  @@index([empresa_id])
+  @@map("contas_bancarias")
 }
 
 // Catálogo de módulos comercializáveis pelo escritório. Toggle por empresa via
@@ -170,6 +202,10 @@ model ArquivoUpload {
   nome_original String
   nome_storage  String // Nome no disco/S3
   tamanho_bytes Int
+  // SHA-256 do conteúdo do arquivo (hex). Usado para deduplicação:
+  // (empresa_id, hash_sha256) é único entre uploads CONFIRMADOS — antes de criar
+  // um novo registro, o handler verifica se já existe e bloqueia/avisa.
+  hash_sha256   String?
   status        StatusArquivo @default(PENDENTE)
   mensagem_erro String?
   uploaded_by   String // usuario_id
@@ -184,6 +220,7 @@ model ArquivoUpload {
   transacoes_cartao    TransacaoCartao[]
   faturamentos         Faturamento[]
 
+  @@index([empresa_id, hash_sha256])
   @@map("arquivos_upload")
 }
 
@@ -313,8 +350,34 @@ model Usuario {
   updated_at          DateTime      @updatedAt
 
   // Relações
-  empresa Empresa?        @relation(fields: [empresa_id], references: [id])
-  uploads ArquivoUpload[]
+  empresa     Empresa?        @relation(fields: [empresa_id], references: [id])
+  uploads     ArquivoUpload[]
+  audit_logs  AuditLog[]      @relation("AuditLogUsuario")
 
   @@map("usuarios")
+}
+
+// Auditoria de operações sensíveis: criação/edição/remoção de uploads, clientes,
+// empresas, usuários e configurações. Registros são imutáveis (apenas inserts) —
+// preservam histórico mesmo após o usuário ou recurso original ser removido.
+model AuditLog {
+  id          String   @id @default(cuid())
+  acao        String   // "DELETE_UPLOAD" | "SOFT_DELETE_CLIENTE" | "UPDATE_PERFIL" | etc.
+  entidade    String   // "ArquivoUpload" | "Usuario" | "Empresa" | "ContaBancaria" | ...
+  entidade_id String?  // ID do recurso afetado (pode ser null se já removido / coleção)
+  usuario_id  String?  // Quem executou (null em ações de sistema). FK opcional para preservar log mesmo após delete do usuário.
+  empresa_id  String?  // Empresa afetada (para filtragem rápida)
+  detalhes    Json?    // Payload com contexto: campos antigos/novos, contagens, mensagens
+  ip          String?  // IP da requisição (quando disponível)
+  user_agent  String?  // User-Agent (auditoria de origem)
+  created_at  DateTime @default(now())
+
+  usuario Usuario? @relation("AuditLogUsuario", fields: [usuario_id], references: [id], onDelete: SetNull)
+
+  @@index([acao])
+  @@index([entidade, entidade_id])
+  @@index([usuario_id])
+  @@index([empresa_id])
+  @@index([created_at])
+  @@map("audit_logs")
 }

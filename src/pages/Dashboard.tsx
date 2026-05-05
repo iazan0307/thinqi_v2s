@@ -110,10 +110,10 @@ const Dashboard = () => {
     await baixarEstimativaPorId(estimativa.id);
   };
 
-  // Perfil ADMINISTRATIVO: oculta informações de retiradas/distribuição de sócios.
+  // Perfil SECRETARIA: oculta informações de retiradas/distribuição de sócios.
   // Quando em modo "Ver como cliente" (admin/contador), ignora essa restrição.
   const esconderRetiradas =
-    user?.role === "CLIENTE" && user.perfil_cliente === "ADMINISTRATIVO" && !viewAs;
+    user?.role === "CLIENTE" && user.perfil_cliente === "SECRETARIA" && !viewAs;
 
   const kpis = data
     ? [

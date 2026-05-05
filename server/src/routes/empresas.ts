@@ -8,6 +8,7 @@ import {
   deleteEmpresa,
 } from '../controllers/empresasController'
 import { listSocios, createSocio } from '../controllers/sociosController'
+import { contasBancariasRoutes } from './contasBancarias'
 import { authenticate, requireRole, requireOwnEmpresa } from '../middleware/auth'
 import { validate } from '../middleware/validate'
 import { Role, RegimeTributario } from '@prisma/client'
@@ -27,6 +28,9 @@ const updateEmpresaSchema = z.object({
   razao_social: z.string().min(3).max(200).optional(),
   regime_tributario: z.nativeEnum(RegimeTributario).optional(),
   ativo: z.boolean().optional(),
+  saldo_inicial: z.number().optional(),
+  // null = todos os meses; 1 = apenas o último; N = últimos N meses
+  estimativa_historico_meses: z.number().int().positive().nullable().optional(),
 })
 
 const createSocioSchema = z.object({
@@ -84,5 +88,8 @@ router.post(
   validate(createSocioSchema),
   createSocio,
 )
+
+// /api/empresas/:empresaId/contas-bancarias/* — cadastro/listagem/remoção via OFX
+router.use('/:empresaId/contas-bancarias', contasBancariasRoutes)
 
 export { router as empresasRoutes }

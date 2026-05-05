@@ -3,6 +3,7 @@ import { prisma } from '../utils/prisma'
 import { AppError } from '../middleware/errorHandler'
 import { TipoArquivo, StatusArquivo } from '@prisma/client'
 import { parseCartao, CartaoParseResult, TransacaoCartaoParseada } from '../services/parser/cartao'
+import { hashFile, findUploadDuplicado } from '../utils/hash'
 
 function tipoArquivoDe(originalName: string): TipoArquivo {
   const ext = originalName.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? ''
@@ -14,7 +15,7 @@ function tipoArquivoDe(originalName: string): TipoArquivo {
  * ou CNPJ detectado no arquivo) → persiste arquivo + transações.
  * Lança AppError com status apropriado em qualquer falha prevista.
  */
-async function processarArquivoCartao(params: {
+export async function processarArquivoCartao(params: {
   file: Express.Multer.File
   empresa_id_hint?: string
   uploaded_by: string
@@ -61,6 +62,15 @@ async function processarArquivoCartao(params: {
     )
   }
 
+  const hash_sha256 = await hashFile(file.path)
+  const dup = await findUploadDuplicado({ empresa_id: empresa.id, hash_sha256 })
+  if (dup) {
+    throw new AppError(
+      409,
+      `Este arquivo já foi importado anteriormente como "${dup.nome_original}" em ${dup.uploaded_at.toISOString().slice(0, 10)}. Reenvio bloqueado para evitar duplicatas.`,
+    )
+  }
+
   const arquivo = await prisma.arquivoUpload.create({
     data: {
       empresa_id: empresa.id,
@@ -68,6 +78,7 @@ async function processarArquivoCartao(params: {
       nome_original: file.originalname,
       nome_storage: file.filename,
       tamanho_bytes: file.size,
+      hash_sha256,
       status: StatusArquivo.PROCESSANDO,
       uploaded_by,
     },

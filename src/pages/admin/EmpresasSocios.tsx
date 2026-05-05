@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, ChevronDown, ChevronRight, UserPlus, Loader2, Pencil, Trash2, UserX, CheckCircle2, Mail, Eye, Boxes } from "lucide-react";
+import { Plus, ChevronDown, ChevronRight, UserPlus, Loader2, Pencil, Trash2, UserX, CheckCircle2, Mail, Eye, Boxes, Landmark, Upload } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useViewAs } from "@/contexts/ViewAsContext";
 import { Card } from "@/components/ui/card";
@@ -42,6 +42,7 @@ interface Empresa {
   cnpj: string;
   regime_tributario: string;
   saldo_inicial?: number | string;
+  estimativa_historico_meses?: number | null;
   _count?: { socios: number; usuarios: number };
   socios?: Socio[];
 }
@@ -142,6 +143,153 @@ function EmpresaModulos({ empresaId }: { empresaId: string }) {
               </div>
             ))}
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Subcomponente contas bancárias ────────────────────────────────────────────
+
+interface ContaBancaria {
+  id: string;
+  bank_id: string;
+  bank_name: string;
+  agencia: string | null;
+  acct_id: string;
+  acct_id_display: string | null;
+  account_type: string | null;
+}
+
+interface ContasBancariasResponse { data: ContaBancaria[] }
+
+function EmpresaContasBancarias({ empresaId }: { empresaId: string }) {
+  const qc = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const { data, isLoading } = useQuery<ContasBancariasResponse>({
+    queryKey: ["empresa-contas-bancarias", empresaId],
+    queryFn: () => api.get<ContasBancariasResponse>(`/empresas/${empresaId}/contas-bancarias`),
+  });
+
+  const adicionar = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("arquivo", file);
+      return api.upload<{ ja_cadastrada: boolean; conta: ContaBancaria }>(
+        `/empresas/${empresaId}/contas-bancarias/from-ofx`,
+        fd,
+      );
+    },
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["empresa-contas-bancarias", empresaId] });
+      if (r.ja_cadastrada) {
+        toast.info(`Conta ${r.conta.bank_name} já estava cadastrada nesta empresa.`);
+      } else {
+        toast.success(`Conta ${r.conta.bank_name} (${r.conta.acct_id_display ?? r.conta.acct_id}) cadastrada.`);
+      }
+    },
+    onError: (err: Error) => toast.error(err.message, { duration: 8000 }),
+  });
+
+  const remover = useMutation({
+    mutationFn: (id: string) => api.delete(`/empresas/${empresaId}/contas-bancarias/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["empresa-contas-bancarias", empresaId] });
+      toast.success("Conta bancária removida.");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const contas = data?.data ?? [];
+
+  return (
+    <div className="border-t border-border">
+      <div className="p-4 pb-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Landmark size={14} className="text-muted-foreground" />
+          <p className="text-sm font-medium text-muted-foreground">Contas Bancárias</p>
+          <span className="text-xs text-muted-foreground/70">
+            (cadastradas via OFX — usadas para roteamento automático no upload em lote)
+          </span>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={adicionar.isPending}
+        >
+          {adicionar.isPending
+            ? <Loader2 size={13} className="animate-spin" />
+            : <Upload size={13} />}
+          Adicionar via OFX
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".ofx"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) adicionar.mutate(f);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+          }}
+        />
+      </div>
+      <div className="px-4 pb-4">
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm py-2">
+            <Loader2 size={14} className="animate-spin" /> Carregando contas...
+          </div>
+        ) : contas.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">
+            Nenhuma conta cadastrada. Suba um OFX para registrar a conta — ela será usada para
+            identificar automaticamente extratos futuros desta empresa.
+          </p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Banco</TableHead>
+                <TableHead>Agência</TableHead>
+                <TableHead>Conta</TableHead>
+                <TableHead>Tipo</TableHead>
+                <TableHead className="w-[60px]"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {contas.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell className="font-medium">
+                    {c.bank_name}
+                    <span className="ml-2 font-mono text-[10px] text-muted-foreground">({c.bank_id})</span>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{c.agencia ?? "—"}</TableCell>
+                  <TableCell className="font-mono text-xs">{c.acct_id_display ?? c.acct_id}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {c.account_type === "CHECKING" ? "Corrente"
+                      : c.account_type === "SAVINGS" ? "Poupança"
+                      : c.account_type ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        if (confirm(`Remover a conta ${c.bank_name}/${c.acct_id_display ?? c.acct_id}? Lançamentos já importados desta conta não são apagados.`)) {
+                          remover.mutate(c.id);
+                        }
+                      }}
+                    >
+                      <Trash2 size={12} />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </div>
     </div>
@@ -275,6 +423,8 @@ const EmpresasSocios = () => {
   const [editERazao, setEditERazao] = useState("");
   const [editERegime, setEditERegime] = useState("SIMPLES_NACIONAL");
   const [editESaldo, setEditESaldo] = useState("0");
+  // "todos" = mostra histórico completo no portal | "1" = só o último | "6" = últimos 6 meses
+  const [editEHistMeses, setEditEHistMeses] = useState<"todos" | "1" | "6">("todos");
 
   // Convidar cliente inline (step sucesso do modal empresa)
   const [inviteNome, setInviteNome] = useState("");
@@ -355,6 +505,9 @@ const EmpresasSocios = () => {
         razao_social: editERazao,
         regime_tributario: editERegime,
         saldo_inicial: Number(editESaldo.replace(/\./g, "").replace(",", ".")) || 0,
+        // null no backend = todos os meses; 1 = apenas o último; 6 = últimos 6 meses
+        estimativa_historico_meses:
+          editEHistMeses === "todos" ? null : Number(editEHistMeses),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["empresas"] });
@@ -550,6 +703,8 @@ const EmpresasSocios = () => {
                       setEditERazao(empresa.razao_social);
                       setEditERegime(empresa.regime_tributario);
                       setEditESaldo(String(Number(empresa.saldo_inicial ?? 0)));
+                      const hm = empresa.estimativa_historico_meses;
+                      setEditEHistMeses(hm === 1 ? "1" : hm === 6 ? "6" : "todos");
                     }}
                     title="Editar empresa"
                   >
@@ -580,6 +735,7 @@ const EmpresasSocios = () => {
                       setShowEmpresaModal(true);
                     }}
                   />
+                  <EmpresaContasBancarias empresaId={empresa.id} />
                   <EmpresaModulos empresaId={empresa.id} />
                 </>
               )}
@@ -773,6 +929,20 @@ const EmpresasSocios = () => {
               />
               <p className="text-xs text-muted-foreground">
                 Saldo de caixa no início da primeira importação. Usado no cálculo do caixa livre do portal.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Histórico de Estimativas (visão do cliente)</Label>
+              <Select value={editEHistMeses} onValueChange={(v) => setEditEHistMeses(v as "todos" | "1" | "6")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">Apenas o mais recente</SelectItem>
+                  <SelectItem value="6">Últimos 6 meses</SelectItem>
+                  <SelectItem value="todos">Todos os meses</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Define o que o cliente vê no portal em "Estimativa de Impostos". Admin sempre enxerga tudo.
               </p>
             </div>
           </div>

@@ -30,7 +30,7 @@ export function AppSidebar() {
   const { user } = useAuth();
   const { viewAs } = useViewAs();
 
-  const isAdministrativo = user?.role === "CLIENTE" && user.perfil_cliente === "ADMINISTRATIVO" && !viewAs;
+  const isAdministrativo = user?.role === "CLIENTE" && user.perfil_cliente === "SECRETARIA" && !viewAs;
   const items = allItems.filter((i) => !(isAdministrativo && i.hideForAdministrativo));
 
   return (

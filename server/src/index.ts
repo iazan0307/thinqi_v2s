@@ -16,6 +16,7 @@ import { usuariosRoutes } from './routes/usuarios'
 import { estimativaImpostoRoutes } from './routes/estimativaImposto'
 import { contrachequeRoutes } from './routes/contracheque'
 import { modulosRoutes } from './routes/modulos'
+import { uploadLoteRoutes } from './routes/uploadLote'
 import { errorHandler } from './middleware/errorHandler'
 import { notFound } from './middleware/notFound'
 
@@ -69,6 +70,7 @@ app.use('/api/admin', modulosRoutes)
 app.use('/api/admin', adminClientesRoutes)
 app.use('/api/estimativa-imposto', estimativaImpostoRoutes)
 app.use('/api/contracheque', contrachequeRoutes)
+app.use('/api/upload-lote', uploadLoteRoutes)
 
 // ─── Error handling ───────────────────────────────────────────────────────────
 

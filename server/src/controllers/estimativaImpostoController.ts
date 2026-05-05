@@ -38,35 +38,73 @@ function parseBRL(s: string): number {
 }
 
 /**
- * Extrai o "TOTAL" principal (total geral mensal) de um PDF de estimativa
- * de impostos. Layouts variam, mas seguem o padrão: rótulo "TOTAL" isolado
- * seguido pelo maior valor da página. Ignora totais por sócio e trimestrais.
+ * Extrai o "TOTAL" principal de um PDF de estimativa de impostos.
+ *
+ * Layout de referência (modelo da Christiane — ONCOHIV / Guilherme Leta / S3):
+ *   | TRIBUTO | VENCIMENTO  | R$ (TOTAL DA GUIA) | (Mês corrente)  |
+ *   | ISS     | 06/04/2026  | 372,93             | 372,93           |
+ *   | CSLL    | 30/04/2026  | 5.759,58           | 1.919,86         |  ← trimestral
+ *   | IRPJ    | 30/04/2026  | 9.925,96           | 3.308,65         |  ← trimestral
+ *   | ...
+ *   | TOTAL   |             | 19.817,32          |                  |  ← linha consolidada
+ *
+ * O sistema deve sempre pegar a coluna "R$ (TOTAL DA GUIA)" — é o valor que
+ * o cliente efetivamente paga. A coluna "Mês corrente" mostra apenas a parcela
+ * atribuída àquele mês (em guias trimestrais é menor) e não deve ser usada.
+ *
+ * Estratégia de extração:
+ *   1. Linha que começa com "TOTAL" (sem outros prefixos) seguida de um valor
+ *      monetário — é a linha consolidada da tabela. Quando há mais de uma
+ *      ocorrência, pega a do MAIOR valor (a parcial "TOTAL Mês" eventualmente
+ *      aparece e é menor que o consolidado da guia).
+ *   2. Marcadores explícitos: "TOTAL GERAL", "Total a pagar/recolher",
+ *      "Total da guia" — usados em layouts que rotulam a coluna.
+ *   3. Soma das linhas de tributo (ISS, PIS, COFINS, CSLL, IRPJ etc.) pela
+ *      coluna "TOTAL DA GUIA" — fallback quando o PDF não tem linha "TOTAL"
+ *      consolidada.
+ *   4. Maior valor monetário do documento — último recurso.
  */
 function extrairTotalGeral(text: string): number {
-  // Estratégia 1: "TOTAL GERAL: R$ X.XXX,XX" ou "Total a pagar: R$ X.XXX,XX"
-  const padroesPrioritarios = [
-    /total\s*geral[^\d]{0,20}([\d.]+,\d{2})/i,
-    /total\s*a\s*(?:pagar|recolher)[^\d]{0,20}([\d.]+,\d{2})/i,
-    /total\s*do\s*m[êe]s[^\d]{0,20}([\d.]+,\d{2})/i,
-    /total\s*mensal[^\d]{0,20}([\d.]+,\d{2})/i,
+  // Estratégia 1 — Linhas que começam com "TOTAL" (boundary de início de linha
+  // ou após espaço/tab; NÃO deve casar com "SUBTOTAL"/"TOTAL DO TRIMESTRE" etc.)
+  // Pega TODOS os candidatos e devolve o maior — em layouts trimestrais existe
+  // "TOTAL DO MÊS" (menor) E "TOTAL DA GUIA"/"TOTAL GERAL" (maior).
+  const reTotalLinha = /(?:^|\n)\s*total(?:\s+(?:geral|da\s+guia|a\s+(?:pagar|recolher)))?[^\d\n]{0,40}([\d.]+,\d{2})/gi
+  let melhorTotal = 0
+  for (const m of text.matchAll(reTotalLinha)) {
+    const v = parseBRL(m[1])
+    if (v > melhorTotal) melhorTotal = v
+  }
+  if (melhorTotal > 0) return melhorTotal
+
+  // Estratégia 2 — Marcadores explícitos sem exigir início de linha
+  const padroesExplicitos = [
+    /total\s+geral[^\d]{0,20}([\d.]+,\d{2})/i,
+    /total\s+da\s+guia[^\d]{0,20}([\d.]+,\d{2})/i,
+    /total\s+a\s+(?:pagar|recolher)[^\d]{0,20}([\d.]+,\d{2})/i,
   ]
-  for (const re of padroesPrioritarios) {
+  for (const re of padroesExplicitos) {
     const m = text.match(re)
     if (m) return parseBRL(m[1])
   }
 
-  // Estratégia 2: linhas iniciadas por "TOTAL" (case-insensitive) com um valor
-  // monetário. Pega o ÚLTIMO ocorrência (geralmente o consolidado), evitando
-  // totais parciais por sócio que aparecem antes.
-  let valor = 0
-  const reLinhaTotal = /total[^\d\n]{0,40}([\d.]+,\d{2})/gi
-  for (const m of text.matchAll(reLinhaTotal)) {
-    const v = parseBRL(m[1])
-    if (v > valor) valor = v
+  // Estratégia 3 — Soma das linhas de tributo. Procura por nomes de tributos
+  // brasileiros seguidos por uma data DD/MM/YYYY e dois valores monetários
+  // (TOTAL DA GUIA + Mês corrente); pega o PRIMEIRO valor (TOTAL).
+  const tributos = ['iss', 'pis', 'cofins', 'csll', 'irpj', 'inss', 'irrf', 'icms', 'das']
+  let somaTributos = 0
+  for (const t of tributos) {
+    const re = new RegExp(
+      `\\b${t}\\b[^\\n]*?\\d{2}\\/\\d{2}\\/\\d{4}[^\\n]*?([\\d.]+,\\d{2})`,
+      'gi',
+    )
+    for (const m of text.matchAll(re)) {
+      somaTributos += parseBRL(m[1])
+    }
   }
-  if (valor > 0) return valor
+  if (somaTributos > 0) return somaTributos
 
-  // Estratégia 3: maior valor monetário do documento (último recurso).
+  // Estratégia 4 — Último recurso: maior valor monetário do documento.
   let maior = 0
   for (const m of text.matchAll(/(?<![\d,])([\d]{1,3}(?:\.\d{3})*,\d{2})(?!\d)/g)) {
     const v = parseBRL(m[1])
@@ -74,6 +112,9 @@ function extrairTotalGeral(text: string): number {
   }
   return maior
 }
+
+/** Exposto para teste — não usar no fluxo de produção (use extrairCnpjEMes) */
+export const _extrairTotalGeralForTest = extrairTotalGeral
 
 async function extrairCnpjEMes(
   buffer: Buffer,
@@ -194,7 +235,7 @@ export async function uploadEstimativa(
  * Persiste 1 PDF de estimativa: resolve empresa+mês (hints ou auto-detectado),
  * substitui PDF anterior do mesmo (empresa, mês), faz upload ao Storage.
  */
-async function persistirEstimativa(params: {
+export async function persistirEstimativa(params: {
   file: Express.Multer.File
   empresa_id_hint?: string
   mes_ref_hint?: string
@@ -373,7 +414,15 @@ export async function getEstimativa(
   }
 }
 
-/** GET /api/estimativa-imposto/historico → lista todas as versões da empresa */
+/** GET /api/estimativa-imposto/historico → lista versões respeitando a janela configurada
+ *
+ * Para usuários CLIENTE, a listagem respeita `Empresa.estimativa_historico_meses`:
+ *   null/0 = todos os meses (default)
+ *   1      = apenas o mais recente
+ *   N      = últimos N meses (a partir do mês corrente)
+ *
+ * Admin/Contador SEMPRE vê tudo — a janela é apenas filtro de exibição pro cliente.
+ */
 export async function listHistoricoEstimativas(
   req: Request,
   res: Response,
@@ -384,18 +433,40 @@ export async function listHistoricoEstimativas(
     if (!user) throw new AppError(401, 'Não autenticado')
 
     let empresaId: string
+    let isCliente = false
     if (user.role === Role.CLIENTE) {
       if (!user.empresa_id) throw new AppError(403, 'Usuário não vinculado a uma empresa')
       empresaId = user.empresa_id
+      isCliente = true
     } else {
       const q = req.query['empresa_id'] as string | undefined
       if (!q) throw new AppError(400, 'empresa_id obrigatório para admin/contador')
       empresaId = q
     }
 
+    // Resolve janela apenas para CLIENTE
+    let where: { empresa_id: string; mes_ref?: { gte: Date } } = { empresa_id: empresaId }
+    let take: number | undefined
+
+    if (isCliente) {
+      const empresa = await prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { estimativa_historico_meses: true },
+      })
+      const janela = empresa?.estimativa_historico_meses ?? null
+      if (janela === 1) {
+        take = 1
+      } else if (janela && janela > 1) {
+        const hoje = new Date()
+        const inicio = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - (janela - 1), 1))
+        where = { empresa_id: empresaId, mes_ref: { gte: inicio } }
+      }
+    }
+
     const items = await prisma.estimativaImpostoPDF.findMany({
-      where: { empresa_id: empresaId },
+      where,
       orderBy: [{ mes_ref: 'desc' }, { uploaded_at: 'desc' }],
+      ...(take ? { take } : {}),
       select: {
         id: true,
         mes_ref: true,

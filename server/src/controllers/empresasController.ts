@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express'
 import { prisma } from '../utils/prisma'
 import { AppError } from '../middleware/errorHandler'
 import { Role } from '@prisma/client'
+import { audit } from '../utils/audit'
 
 /** Normaliza CNPJ para armazenamento: remove pontuação */
 function normalizeCnpj(cnpj: string): string {
@@ -116,6 +117,19 @@ export async function createEmpresa(req: Request, res: Response, next: NextFunct
       },
     })
 
+    await audit({
+      acao: 'CREATE_EMPRESA',
+      entidade: 'Empresa',
+      entidade_id: empresa.id,
+      empresa_id: empresa.id,
+      detalhes: {
+        razao_social: empresa.razao_social,
+        cnpj: empresa.cnpj,
+        regime_tributario: empresa.regime_tributario,
+      },
+      req,
+    })
+
     res.status(201).json({ ...empresa, cnpj: formatCnpj(empresa.cnpj) })
   } catch (err) {
     next(err)
@@ -142,6 +156,17 @@ export async function deleteEmpresa(req: Request, res: Response, next: NextFunct
       prisma.empresa.delete({ where: { id } }),
     ])
 
+    await audit({
+      acao: 'DELETE_EMPRESA',
+      entidade: 'Empresa',
+      entidade_id: id,
+      detalhes: {
+        razao_social: empresa.razao_social,
+        cnpj: empresa.cnpj,
+      },
+      req,
+    })
+
     res.json({ deletado: true })
   } catch (err) {
     next(err)
@@ -151,11 +176,12 @@ export async function deleteEmpresa(req: Request, res: Response, next: NextFunct
 export async function updateEmpresa(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params
-    const { razao_social, regime_tributario, ativo, saldo_inicial } = req.body as {
+    const { razao_social, regime_tributario, ativo, saldo_inicial, estimativa_historico_meses } = req.body as {
       razao_social?: string
       regime_tributario?: string
       ativo?: boolean
       saldo_inicial?: number
+      estimativa_historico_meses?: number | null
     }
 
     const empresa = await prisma.empresa.findUnique({ where: { id } })
@@ -168,7 +194,30 @@ export async function updateEmpresa(req: Request, res: Response, next: NextFunct
         ...(regime_tributario && { regime_tributario: regime_tributario as never }),
         ...(ativo !== undefined && { ativo }),
         ...(saldo_inicial !== undefined && { saldo_inicial }),
+        ...(estimativa_historico_meses !== undefined && { estimativa_historico_meses }),
       },
+    })
+
+    await audit({
+      acao: 'UPDATE_EMPRESA',
+      entidade: 'Empresa',
+      entidade_id: id,
+      empresa_id: id,
+      detalhes: {
+        antes: {
+          razao_social: empresa.razao_social,
+          regime_tributario: empresa.regime_tributario,
+          ativo: empresa.ativo,
+          saldo_inicial: empresa.saldo_inicial,
+        },
+        depois: {
+          razao_social: updated.razao_social,
+          regime_tributario: updated.regime_tributario,
+          ativo: updated.ativo,
+          saldo_inicial: updated.saldo_inicial,
+        },
+      },
+      req,
     })
 
     res.json({ ...updated, cnpj: formatCnpj(updated.cnpj) })

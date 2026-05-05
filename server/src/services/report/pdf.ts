@@ -198,12 +198,12 @@ export function gerarPDFRelatorio(
       ry += 20
 
       const rows: [string, string, Parameters<typeof tableRow>[6]][] = [
-        ['Faturamento declarado (NFs)',         fmtBRL(resultado.total_faturado),                { bold: true }],
+        ['Faturamento (NFS emitidas)',           fmtBRL(resultado.total_faturado),                { bold: true }],
         ['Entradas Banco',                       fmtBRL(resultado.total_entradas_banco),          {}],
-        ['(−) Aporte Sócios',                    `− ${fmtBRL(resultado.total_aporte_socios)}`,    { valueColor: C.red }],
+        ['(−) Aporte de Sócios',                 `− ${fmtBRL(resultado.total_aporte_socios)}`,    { valueColor: C.red }],
         ['(−) Recebimentos CC/CD',               `− ${fmtBRL(resultado.total_recebimentos_cartao)}`, { valueColor: C.red }],
-        ['(−) Rendimento Aplicação',             `− ${fmtBRL(resultado.total_rendimento_aplicacao)}`, { valueColor: C.red }],
-        ['(−) Resgate Aplicação',                `− ${fmtBRL(resultado.total_resgate_aplicacao)}`, { valueColor: C.red }],
+        ['(−) Rendimento Aplicação Automática', `− ${fmtBRL(resultado.total_rendimento_aplicacao)}`, { valueColor: C.red }],
+        ['(−) Resgate Aplicações Financeiras',   `− ${fmtBRL(resultado.total_resgate_aplicacao)}`, { valueColor: C.red }],
         ['(+) Vendas CC/CD',                     fmtBRL(resultado.total_vendas_cartao),           { valueColor: C.green }],
         ['ENTRADAS REAIS',                       fmtBRL(resultado.total_entradas_real),           { bold: true, highlight: true }],
       ]

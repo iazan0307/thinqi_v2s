@@ -45,17 +45,17 @@ function resolveEmpresaId(req: Request): string {
 }
 
 /**
- * Perfil ADMINISTRATIVO: usuário CLIENTE com acesso restrito, não visualiza
+ * Perfil SECRETARIA: usuário CLIENTE com acesso restrito, não visualiza
  * retiradas, distribuição de lucros nem pró-labore.
  */
-async function isAdministrativoRestrito(req: Request): Promise<boolean> {
+async function isSecretariaRestrita(req: Request): Promise<boolean> {
   const { user } = req
   if (!user || user.role !== Role.CLIENTE) return false
   const perfil = await prisma.usuario.findUnique({
     where: { id: user.id },
     select: { perfil_cliente: true },
   })
-  return perfil?.perfil_cliente === PerfilCliente.ADMINISTRATIVO
+  return perfil?.perfil_cliente === PerfilCliente.SECRETARIA
 }
 
 // ─── GET /api/portal/dashboard/:mes ──────────────────────────────────────────
@@ -70,7 +70,7 @@ export async function getDashboard(
     const bounds = mesBounds(req.params['mes'] ?? '')
     if (!bounds) throw new AppError(422, 'Formato de mês inválido. Use YYYY-MM')
 
-    const restrito = await isAdministrativoRestrito(req)
+    const restrito = await isSecretariaRestrita(req)
 
     const empresa = await prisma.empresa.findUnique({
       where: { id: empresaId },
@@ -181,7 +181,7 @@ export async function getHistorico(
   try {
     const empresaId = resolveEmpresaId(req)
     const meses = Math.min(24, Math.max(1, Number(req.query['meses'] ?? 12)))
-    const restrito = await isAdministrativoRestrito(req)
+    const restrito = await isSecretariaRestrita(req)
 
     // Busca todos os 12 meses de transações
     const fim = new Date()
@@ -259,7 +259,7 @@ export async function getAlertas(
 ): Promise<void> {
   try {
     const empresaId = resolveEmpresaId(req)
-    const restrito = await isAdministrativoRestrito(req)
+    const restrito = await isSecretariaRestrita(req)
 
     // Retiradas com alerta nos últimos 3 meses
     const tresAtras = new Date(Date.UTC(
@@ -268,7 +268,7 @@ export async function getAlertas(
       1,
     ))
 
-    // Perfil ADMINISTRATIVO não visualiza alertas de retiradas de sócios
+    // Perfil SECRETARIA não visualiza alertas de retiradas de sócios
     const retiradas = restrito
       ? []
       : await prisma.retiradaSocio.findMany({

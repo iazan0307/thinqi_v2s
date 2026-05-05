@@ -85,11 +85,22 @@ const Dashboard = () => {
 
   // Histórico de todas as versões de estimativas (todos os meses + todas as versões
   // por mês). Usado para o cliente revisitar PDFs antigos.
+  // Filtro opcional por período (dropdown) — quando ausente, respeita a janela
+  // configurada na empresa (estimativa_historico_meses).
+  const [periodoEstimativa, setPeriodoEstimativa] = useState<"all" | "last_3_months" | "last_6_months" | "last_year">("all");
+  const histEstParams = (() => {
+    const sp = new URLSearchParams();
+    if (empresaQueryId) sp.set("empresa_id", empresaQueryId);
+    if (periodoEstimativa !== "all") sp.set("period", periodoEstimativa);
+    const s = sp.toString();
+    return s ? `?${s}` : "";
+  })();
+
   const { data: historicoEstimativas } = useQuery<{
-    data: { id: string; mes_ref: string; nome_original: string; tamanho_bytes: number; uploaded_at: string; valor_total: number }[]
+    data: { id: string; mes_ref: string; nome_original: string; tamanho_bytes: number; uploaded_at: string; valor_total: number; vigente: boolean }[]
   }>({
-    queryKey: ["portal-estimativa-historico", user?.empresa_id],
-    queryFn: () => api.get(`/estimativa-imposto/historico${params}`),
+    queryKey: ["portal-estimativa-historico", user?.empresa_id, periodoEstimativa],
+    queryFn: () => api.get(`/estimativa-imposto/historico${histEstParams}`),
     enabled: !!user,
     retry: false,
   });
@@ -246,15 +257,28 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Histórico de estimativas (todos os meses + todas as versões) */}
-      {historicoEstimativas && historicoEstimativas.data.length > 0 && (
+      {/* Histórico de estimativas — Secretária NÃO vê (só sócio) */}
+      {!esconderRetiradas && historicoEstimativas && historicoEstimativas.data.length > 0 && (
         <div className="bg-card rounded-xl border border-border p-6 shadow-sm animate-reveal">
-          <h2 className="text-base font-semibold mb-3">Histórico de Estimativas</h2>
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+            <h2 className="text-base font-semibold">Histórico de Estimativas</h2>
+            <select
+              value={periodoEstimativa}
+              onChange={(e) => setPeriodoEstimativa(e.target.value as typeof periodoEstimativa)}
+              className="text-xs border border-border rounded px-2 py-1 bg-background"
+            >
+              <option value="all">Todos os meses</option>
+              <option value="last_3_months">Últimos 3 meses</option>
+              <option value="last_6_months">Últimos 6 meses</option>
+              <option value="last_year">Último ano</option>
+            </select>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-xs text-muted-foreground border-b border-border">
                 <tr>
                   <th className="text-left py-2 pr-3 font-medium">Mês</th>
+                  <th className="text-left py-2 pr-3 font-medium">Versão</th>
                   <th className="text-left py-2 pr-3 font-medium">Arquivo</th>
                   <th className="text-right py-2 pr-3 font-medium">Total</th>
                   <th className="text-left py-2 pr-3 font-medium">Enviado em</th>
@@ -263,10 +287,24 @@ const Dashboard = () => {
               </thead>
               <tbody>
                 {historicoEstimativas.data.map(item => (
-                  <tr key={item.id} className="border-b border-border/40 last:border-0">
-                    <td className="py-2 pr-3">{item.mes_ref.slice(0, 7)}</td>
-                    <td className="py-2 pr-3 truncate max-w-xs">{item.nome_original}</td>
-                    <td className="py-2 pr-3 text-right">
+                  <tr
+                    key={item.id}
+                    className={`border-b border-border/40 last:border-0 ${!item.vigente ? "opacity-60" : ""}`}
+                  >
+                    <td className="py-2 pr-3 capitalize">
+                      {new Date(item.mes_ref).toLocaleDateString("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" })}
+                    </td>
+                    <td className="py-2 pr-3">
+                      {item.vigente ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded bg-[hsl(var(--kpi-green-bg))] text-[hsl(var(--kpi-green))]">
+                          Vigente
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground">Substituída</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 truncate max-w-xs" title={item.nome_original}>{item.nome_original}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums">
                       {item.valor_total > 0 ? fmtBRL(item.valor_total) : "—"}
                     </td>
                     <td className="py-2 pr-3 text-muted-foreground">

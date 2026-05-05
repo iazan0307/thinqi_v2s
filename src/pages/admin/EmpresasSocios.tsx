@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, ChevronDown, ChevronRight, UserPlus, Loader2, Pencil, Trash2, UserX, CheckCircle2, Mail, Eye, Boxes, Landmark, Upload } from "lucide-react";
+import { Plus, ChevronDown, ChevronRight, UserPlus, Loader2, Pencil, Trash2, UserX, CheckCircle2, Mail, Eye, Boxes, Landmark, Upload, Calculator, Download, FileText } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useViewAs } from "@/contexts/ViewAsContext";
 import { Card } from "@/components/ui/card";
@@ -292,6 +292,310 @@ function EmpresaContasBancarias({ empresaId }: { empresaId: string }) {
           </Table>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Subcomponente: histórico de Estimativas de Impostos ─────────────────────
+
+interface Estimativa {
+  id: string;
+  mes_ref: string;
+  nome_original: string;
+  tamanho_bytes: number;
+  uploaded_at: string;
+  valor_total: number;
+  vigente: boolean;
+}
+
+interface EstimativasResponse { data: Estimativa[] }
+
+type EstimativaPeriod = "all" | "last_month" | "last_3_months" | "last_6_months" | "last_year";
+
+function EmpresaEstimativas({ empresaId }: { empresaId: string }) {
+  const qc = useQueryClient();
+  const [period, setPeriod] = useState<EstimativaPeriod>("all");
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingMes, setPendingMes] = useState("");
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Estimativa | null>(null);
+
+  const { data, isLoading } = useQuery<EstimativasResponse>({
+    queryKey: ["empresa-estimativas", empresaId, period],
+    queryFn: () => api.get<EstimativasResponse>(
+      `/estimativa-imposto/historico?empresa_id=${empresaId}${period !== "all" ? `&period=${period}` : ""}`,
+    ),
+  });
+
+  const upload = useMutation({
+    mutationFn: async ({ file, mes }: { file: File; mes: string }) => {
+      const fd = new FormData();
+      fd.append("arquivo", file);
+      fd.append("empresa_id", empresaId);
+      fd.append("mes_ref", mes);
+      return api.upload<{ id: string }>("/estimativa-imposto/upload", fd);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["empresa-estimativas", empresaId] });
+      setShowUploadModal(false);
+      setPendingFile(null);
+      setPendingMes("");
+      toast.success("Estimativa enviada com sucesso.");
+    },
+    onError: (err: Error) => toast.error(err.message, { duration: 8000 }),
+  });
+
+  const remover = useMutation({
+    mutationFn: (id: string) => api.delete(`/estimativa-imposto/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["empresa-estimativas", empresaId] });
+      setConfirmDelete(null);
+      toast.success("Estimativa removida (registro preservado para auditoria).");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const baixar = (e: Estimativa) => {
+    api.downloadBlob(`/estimativa-imposto/${e.id}/pdf`)
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = e.nome_original;
+        a.click();
+        URL.revokeObjectURL(url);
+      })
+      .catch(() => toast.error("Erro ao baixar PDF"));
+  };
+
+  const fmtBRL = (v: number) =>
+    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+
+  const fmtMesRef = (iso: string) =>
+    new Date(iso).toLocaleDateString("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
+
+  const fmtData = (iso: string) =>
+    new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+
+  const estimativas = data?.data ?? [];
+  const vigentes = estimativas.filter(e => e.vigente);
+  const substituidas = estimativas.filter(e => !e.vigente);
+
+  return (
+    <div className="border-t border-border">
+      <div className="p-4 pb-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Calculator size={14} className="text-muted-foreground" />
+          <p className="text-sm font-medium text-muted-foreground">Estimativas de Impostos</p>
+          {estimativas.length > 0 && (
+            <Badge variant="outline" className="text-[10px] font-normal">
+              {estimativas.length} upload{estimativas.length !== 1 ? "s" : ""}
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={period} onValueChange={(v) => setPeriod(v as EstimativaPeriod)}>
+            <SelectTrigger className="h-8 w-[180px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os períodos</SelectItem>
+              <SelectItem value="last_month">Último mês (uploads)</SelectItem>
+              <SelectItem value="last_3_months">Últimos 3 meses</SelectItem>
+              <SelectItem value="last_6_months">Últimos 6 meses</SelectItem>
+              <SelectItem value="last_year">Último ano</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={upload.isPending}
+          >
+            <Upload size={13} /> Novo Upload
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) {
+                setPendingFile(f);
+                const hoje = new Date();
+                setPendingMes(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`);
+                setShowUploadModal(true);
+              }
+              if (fileInputRef.current) fileInputRef.current.value = "";
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="px-4 pb-4">
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm py-2">
+            <Loader2 size={14} className="animate-spin" /> Carregando estimativas...
+          </div>
+        ) : estimativas.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">
+            Nenhuma estimativa cadastrada {period !== "all" && "neste período"}. Suba um PDF de estimativa de impostos para começar.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {vigentes.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Vigentes</p>
+                {vigentes.map((e) => (
+                  <EstimativaRow
+                    key={e.id}
+                    e={e}
+                    fmtBRL={fmtBRL}
+                    fmtMesRef={fmtMesRef}
+                    fmtData={fmtData}
+                    onDownload={() => baixar(e)}
+                    onDelete={() => setConfirmDelete(e)}
+                  />
+                ))}
+              </div>
+            )}
+
+            {substituidas.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Versões substituídas</p>
+                {substituidas.map((e) => (
+                  <EstimativaRow
+                    key={e.id}
+                    e={e}
+                    fmtBRL={fmtBRL}
+                    fmtMesRef={fmtMesRef}
+                    fmtData={fmtData}
+                    onDownload={() => baixar(e)}
+                    onDelete={() => setConfirmDelete(e)}
+                    substituida
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Modal upload */}
+      <Dialog open={showUploadModal} onOpenChange={(v) => { if (!v) { setShowUploadModal(false); setPendingFile(null); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nova Estimativa de Impostos</DialogTitle>
+            <DialogDescription>
+              O PDF é processado e o valor TOTAL é extraído automaticamente.
+              Cada upload preserva os anteriores no histórico.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <Label>Arquivo selecionado</Label>
+              <p className="text-sm text-muted-foreground">{pendingFile?.name}</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="estimativa-mes">Mês de Referência</Label>
+              <Input
+                id="estimativa-mes"
+                type="month"
+                value={pendingMes}
+                onChange={(e) => setPendingMes(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Se já existir um upload para este mês, ele vira "versão substituída" e o atual fica como vigente.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowUploadModal(false); setPendingFile(null); }}>Cancelar</Button>
+            <Button
+              onClick={() => { if (pendingFile && pendingMes) upload.mutate({ file: pendingFile, mes: pendingMes }); }}
+              disabled={!pendingFile || !pendingMes || upload.isPending}
+            >
+              {upload.isPending && <Loader2 size={14} className="animate-spin mr-1" />}
+              Enviar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmação delete */}
+      <AlertDialog open={!!confirmDelete} onOpenChange={(v) => !v && setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover esta estimativa?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  Vai remover <strong>{confirmDelete && fmtMesRef(confirmDelete.mes_ref)}</strong>
+                  {" "}— {confirmDelete && fmtBRL(confirmDelete.valor_total)}.
+                </p>
+                <p className="text-xs">
+                  O registro fica preservado na auditoria (soft delete) e o PDF original
+                  permanece arquivado, mas deixa de aparecer pra cliente e admin nas listagens.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => confirmDelete && remover.mutate(confirmDelete.id)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function EstimativaRow({
+  e, fmtBRL, fmtMesRef, fmtData, onDownload, onDelete, substituida,
+}: {
+  e: Estimativa;
+  fmtBRL: (v: number) => string;
+  fmtMesRef: (iso: string) => string;
+  fmtData: (iso: string) => string;
+  onDownload: () => void;
+  onDelete: () => void;
+  substituida?: boolean;
+}) {
+  return (
+    <div className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${substituida ? "border-border bg-muted/20 opacity-75" : "border-primary/20 bg-primary/5"}`}>
+      <FileText size={14} className={substituida ? "text-muted-foreground" : "text-primary"} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium capitalize">{fmtMesRef(e.mes_ref)}</p>
+          {!substituida && (
+            <Badge className="bg-[hsl(var(--kpi-green-bg))] text-[hsl(var(--kpi-green))] border-0 text-[10px] gap-0.5">
+              <CheckCircle2 size={10} /> Vigente
+            </Badge>
+          )}
+          {substituida && (
+            <Badge variant="outline" className="text-[10px] gap-0.5 text-muted-foreground">
+              Substituída
+            </Badge>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground truncate" title={e.nome_original}>
+          {fmtBRL(e.valor_total)} · enviado em {fmtData(e.uploaded_at)} · {e.nome_original}
+        </p>
+      </div>
+      <Button variant="ghost" size="sm" className="h-7 gap-1.5" onClick={onDownload} title="Baixar PDF">
+        <Download size={12} />
+      </Button>
+      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={onDelete} title="Remover">
+        <Trash2 size={12} />
+      </Button>
     </div>
   );
 }
@@ -736,6 +1040,7 @@ const EmpresasSocios = () => {
                     }}
                   />
                   <EmpresaContasBancarias empresaId={empresa.id} />
+                  <EmpresaEstimativas empresaId={empresa.id} />
                   <EmpresaModulos empresaId={empresa.id} />
                 </>
               )}

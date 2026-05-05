@@ -158,14 +158,25 @@ model EstimativaImpostoPDF {
   // Total geral extraído do PDF (campo "TOTAL" principal). Usado pelo portal
   // do cliente para exibir o valor previsto sem precisar abrir o PDF.
   valor_total   Decimal  @default(0) @db.Decimal(14, 2)
+  // Payload completo do parser (cnpj detectado, mês detectado, valor total,
+  // tributos individuais quando extraídos). Útil pra debugging e pra futura
+  // exibição de breakdown por tributo. JSONB no Postgres → consulta indexada.
+  extracted_data Json?
   uploaded_by   String // usuario_id
   uploaded_at   DateTime @default(now())
+  // Soft delete: registros nunca são removidos fisicamente; ficam ocultos
+  // das listagens via `deleted_at IS NULL` mas continuam acessíveis na
+  // auditoria. Isso atende a Christiane (decisão da reunião): nenhum upload
+  // de estimativa é descartado, mesmo após admin decidir "remover".
+  deleted_at    DateTime?
+  deleted_by    String?
 
   empresa Empresa @relation(fields: [empresa_id], references: [id])
 
   // Sem unique([empresa_id, mes_ref]) → permite manter histórico de uploads
   // por mês. A versão exibida no portal é sempre a mais recente (uploaded_at desc).
   @@index([empresa_id, mes_ref])
+  @@index([empresa_id, deleted_at])
   @@map("estimativas_imposto_pdf")
 }
 

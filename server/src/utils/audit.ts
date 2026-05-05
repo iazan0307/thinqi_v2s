@@ -34,6 +34,9 @@ export type AuditAction =
   | 'DELETE_SOCIO'
   // Liberação de período / relatório
   | 'LIBERAR_PERIODO'
+  // Estimativa de impostos (PDF)
+  | 'CREATE_ESTIMATIVA'
+  | 'DELETE_ESTIMATIVA'
   // Login/Logout (opcional, alto volume — desabilitado por padrão)
   | 'LOGIN'
   | 'LOGOUT'
